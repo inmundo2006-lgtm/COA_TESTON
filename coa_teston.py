@@ -186,8 +186,17 @@ def load_from_sharepoint():
         ctx  = ClientContext(SP_SITE_URL).with_credentials(cred)
 
         def _read(path):
-            f = ctx.web.get_file_by_server_relative_url(path)
-            return f.read()
+            import tempfile, os
+            # Método compatível com office365-rest-python-client >= 2.5
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+                tmp_path = tmp.name
+            try:
+                with open(tmp_path, "wb") as fh:
+                    ctx.web.get_file_by_server_relative_url(path).download(fh).execute_query()
+                with open(tmp_path, "rb") as fh:
+                    return fh.read()
+            finally:
+                os.unlink(tmp_path)
 
         apt_bytes  = _read(SP_APT_PATH)
         perf_bytes = _read(SP_PERF_PATH)
