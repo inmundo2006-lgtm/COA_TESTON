@@ -171,43 +171,64 @@ if not check_login():
 # ══════════════════════════════════════════════════════════════════════════════
 # SHAREPOINT — carregamento dos CSVs
 # ══════════════════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=600)  # cache de 10 minutos — recarrega automaticamente
+@st.cache_data(ttl=600)  # cache de 10 minutos
 def load_from_sharepoint():
     """
-    Carrega os dois CSVs direto do SharePoint via Microsoft Graph API.
-    Requer: pip install Office365-REST-Python-Client
-    Retorna (apt_bytes, perf_bytes) ou (None, None) se falhar.
+    Carrega CSVs do SharePoint via Microsoft Graph API REST.
+    Usa apenas requests — sem dependência do Office365 library.
+    Requer: Sites.Read.All no app Azure AD.
     """
     try:
-        from office365.sharepoint.client_context import ClientContext
-        from office365.runtime.auth.client_credential import ClientCredential
+        import requests
 
-        cred = ClientCredential(SP_CLIENT_ID, SP_CLIENT_SECRET)
-        ctx  = ClientContext(SP_SITE_URL).with_credentials(cred)
+        # 1. Obtém token OAuth2 via client credentials
+        token_url = f"https://login.microsoftonline.com/{SP_TENANT_ID}/oauth2/v2.0/token"
+        token_resp = requests.post(token_url, data={
+            "grant_type":    "client_credentials",
+            "client_id":     SP_CLIENT_ID,
+            "client_secret": SP_CLIENT_SECRET,
+            "scope":         "https://graph.microsoft.com/.default",
+        })
+        token_resp.raise_for_status()
+        access_token = token_resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {access_token}"}
 
-        def _read(path):
-            import tempfile, os
-            # Método compatível com office365-rest-python-client >= 2.5
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-                tmp_path = tmp.name
-            try:
-                with open(tmp_path, "wb") as fh:
-                    ctx.web.get_file_by_server_relative_url(path).download(fh).execute_query()
-                with open(tmp_path, "rb") as fh:
-                    return fh.read()
-            finally:
-                os.unlink(tmp_path)
+        # 2. Descobre o site ID via Graph
+        hostname = SP_SITE_URL.replace("https://", "").split("/")[0]
+        site_path = "/".join(SP_SITE_URL.replace("https://", "").split("/")[1:])
+        site_resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/sites/{hostname}:/{site_path}",
+            headers=headers
+        )
+        site_resp.raise_for_status()
+        site_id = site_resp.json()["id"]
 
-        apt_bytes  = _read(SP_APT_PATH)
-        perf_bytes = _read(SP_PERF_PATH)
+        # 3. Obtém drive raiz do site
+        drive_resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive",
+            headers=headers
+        )
+        drive_resp.raise_for_status()
+        drive_id = drive_resp.json()["id"]
+
+        # 4. Baixa cada arquivo pelo caminho relativo
+        def _download(sp_path):
+            # Converte caminho SharePoint para caminho relativo ao drive
+            # ex: /sites/MSCOLHEITA/Documentos Compartilhados/VITOR/AGRITEL/apontamentos.csv
+            # → VITOR/AGRITEL/apontamentos.csv
+            parts = sp_path.replace("/sites/MSCOLHEITA/Documentos Compartilhados/", "").strip("/")
+            url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{parts}:/content"
+            resp = requests.get(url, headers=headers)
+            resp.raise_for_status()
+            return resp.content
+
+        apt_bytes  = _download(SP_APT_PATH)
+        perf_bytes = _download(SP_PERF_PATH)
         return apt_bytes, perf_bytes
 
-    except ImportError:
-        st.error("Biblioteca Office365 não instalada.")
-        return None, None
     except Exception as e:
         import traceback
-        st.error(f"Erro SharePoint: {str(e)} | {traceback.format_exc()}")
+        st.error(f"Erro SharePoint (Graph API): {str(e)}\n\n{traceback.format_exc()}")
         return None, None
 
 
