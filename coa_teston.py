@@ -194,9 +194,11 @@ def load_from_sharepoint():
         return apt_bytes, perf_bytes
 
     except ImportError:
+        st.error("Biblioteca Office365 não instalada.")
         return None, None
     except Exception as e:
-        st.warning(f"SharePoint: {e} — usando fallback local.")
+        import traceback
+        st.error(f"Erro SharePoint: {str(e)} | {traceback.format_exc()}")
         return None, None
 
 
