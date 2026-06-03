@@ -508,15 +508,19 @@ def fig_gauge(valor, titulo, maximo=100, cor=C_PRODUTIVO, sufixo="%"):
         mode="gauge+number", value=round(valor,1),
         number=dict(suffix=sufixo, font=dict(size=22, color=cor)),
         gauge=dict(
-            axis=dict(range=[0,maximo], tickwidth=1,
-                      tickcolor="rgba(255,255,255,0.3)",
-                      tickfont=dict(color="#e0e0e0")),
+            axis=dict(
+                range=[0, maximo],
+                tickwidth=1,
+                tickvals=[0, 25, 50, 75, 100],
+                ticktext=["0", "25", "50", "75", "100"],
+                tickcolor="rgba(255,255,255,0.3)",
+                tickfont=dict(color="#e0e0e0", size=10)),
             bar=dict(color=cor, thickness=0.6),
             bgcolor="rgba(255,255,255,0.05)", borderwidth=0,
             steps=[dict(range=[0,maximo], color="rgba(255,255,255,0.05)")]),
-        title=dict(text=titulo, font=dict(size=12, color="#aaaaaa"))))
-    fig.update_layout(**FIG_LAYOUT, height=200,
-        margin=dict(l=20, r=20, t=40, b=20))
+        title=dict(text=titulo, font=dict(size=11, color="#aaaaaa"))))
+    fig.update_layout(**FIG_LAYOUT, height=210,
+        margin=dict(l=30, r=30, t=40, b=30))
     return fig
 
 
