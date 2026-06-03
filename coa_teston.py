@@ -328,13 +328,21 @@ def load_performance(content: bytes) -> pd.DataFrame:
         if is_xlsx:
             return pd.to_numeric(df[name], errors="coerce").fillna(0.0)
         return df[name].apply(parse_num)
+
+    def tempo(name):
+        if name not in c:
+            return pd.Series(0.0, index=df.index)
+        if is_xlsx:
+            return pd.to_numeric(df[name], errors="coerce").fillna(0.0)
+        return df[name].apply(parse_tempo_perf)
+
     return pd.DataFrame({
         "NomeFrota":        df["Nome da Máquina"].str.extract(r"(Frota \d+)")[0].fillna(df["Nome da Máquina"]),
         "Frota":            df["Nome da Máquina"].str.extract(r"Frota (\d+)")[0],
-        "TempoMotorLigado": df["Tempo Motor Ligado:"].apply(parse_tempo_perf),
-        "TempoTrabalho":    df["Tempo em Trabalho"].apply(parse_tempo_perf),
-        "TempoManobra":     df["Tempo em Manobra:"].apply(parse_tempo_perf),
-        "TempoOcioso":      df["Tempo com Motor Ocioso:"].apply(parse_tempo_perf),
+        "TempoMotorLigado": tempo("Tempo Motor Ligado:"),
+        "TempoTrabalho":    tempo("Tempo em Trabalho"),
+        "TempoManobra":     tempo("Tempo em Manobra:"),
+        "TempoOcioso":      tempo("Tempo com Motor Ocioso:"),
         "ConsumoTotal":     col("Consumo Total:"),
         "ConsumoTrabalho":  col("Consumo em Trabalho:"),
         "TaxaMedConsumo":   col("Taxa Média de Consumo de Combustível"),
@@ -354,7 +362,7 @@ def load_performance(content: bytes) -> pd.DataFrame:
         "RpmExtMed":        col("Rpm Médio de Exaustor Primário em Trabalho"),
         "PressaoMed":       col("Pressão Média de Corte Base em Trabalho"),
         "Embuchamentos":    col("Número de Embuchamentos Detectados"),
-        "TempoElevador":    df["Tempo de Elevador Ligado"].apply(parse_tempo_perf),
+        "TempoElevador":    tempo("Tempo de Elevador Ligado"),
     })
 
 def calc_disponibilidade(df: pd.DataFrame) -> pd.DataFrame:
