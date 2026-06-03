@@ -271,21 +271,63 @@ def parse_tempo_perf(txt) -> float:
 
 @st.cache_data
 def load_apontamentos(content: bytes) -> pd.DataFrame:
-    df = pd.read_csv(io.BytesIO(content))
-    df.columns = ["Apontamento", "DeviceId", "Codigo", "HorasTexto"]
-    df["Horas"] = df["HorasTexto"].apply(parse_horas)
-    df["Codigo"] = df["Codigo"].astype(str).replace("10.004", "10.003")
-    df = df.groupby(["Apontamento", "DeviceId", "Codigo"], as_index=False)["Horas"].sum()
+    # Detecta formato pelo header dos bytes
+    is_xlsx = content[:4] == b'PK\x03\x04'  # assinatura ZIP/XLSX
+
+    if is_xlsx:
+        # XLSX: valores já são decimais limpos
+        df = pd.read_excel(io.BytesIO(content))
+        df.columns = ["Apontamento", "DeviceId", "Codigo", "Horas"]
+        df["Horas"] = pd.to_numeric(df["Horas"], errors="coerce").fillna(0.0)
+    else:
+        # CSV: detecta se novo formato (linhas encapsuladas) ou padrão
+        raw = content.decode("utf-8-sig", errors="replace")
+        linhas = raw.strip().split("\n")
+        primeira_dado = linhas[1].strip() if len(linhas) > 1 else ""
+        novo_formato = primeira_dado.startswith('"') and '""' in primeira_dado
+
+        if novo_formato:
+            rows = []
+            for line in linhas:
+                line = line.strip().strip("\r")
+                if line.startswith("Name") or not line:
+                    continue
+                if line.startswith('"') and line.endswith('"'):
+                    line = line[1:-1]
+                line = line.replace('""', "\x00")
+                parts = line.split(",")
+                if len(parts) >= 4:
+                    rows.append([parts[0], parts[1], parts[2],
+                                  ",".join(parts[3:]).replace("\x00", '"').strip('"')])
+            df = pd.DataFrame(rows, columns=["Apontamento","DeviceId","Codigo","HorasTexto"])
+        else:
+            df = pd.read_csv(io.BytesIO(content))
+            df.columns = ["Apontamento","DeviceId","Codigo","HorasTexto"]
+
+        df["Horas"] = df["HorasTexto"].apply(parse_horas)
+
+    df["Codigo"] = df["Codigo"].astype(str).str.replace(".0","",regex=False)
+    # Consolida Sem Apontamento (10003 e 10004)
+    df.loc[df["Codigo"] == "10004", "Codigo"] = "10003"
+    df = df.groupby(["Apontamento","DeviceId","Codigo"], as_index=False)["Horas"].sum()
     df["Categoria"] = df["Apontamento"].map(CATEGORIA_MAP).fillna("Sem Apontamento")
-    df["Frota"] = df["DeviceId"].map(DEVICE_MAP).fillna(df["DeviceId"])
+    df["Frota"]     = df["DeviceId"].map(DEVICE_MAP).fillna(df["DeviceId"])
     return df
 
 @st.cache_data
 def load_performance(content: bytes) -> pd.DataFrame:
-    df = pd.read_csv(io.BytesIO(content))
+    is_xlsx = content[:4] == b'PK\x03\x04'
+    if is_xlsx:
+        df = pd.read_excel(io.BytesIO(content))
+    else:
+        df = pd.read_csv(io.BytesIO(content))
     c = df.columns.tolist()
     def col(name):
-        return df[name].apply(parse_num) if name in c else pd.Series(0.0, index=df.index)
+        if name not in c:
+            return pd.Series(0.0, index=df.index)
+        if is_xlsx:
+            return pd.to_numeric(df[name], errors="coerce").fillna(0.0)
+        return df[name].apply(parse_num)
     return pd.DataFrame({
         "NomeFrota":        df["Nome da Máquina"].str.extract(r"(Frota \d+)")[0].fillna(df["Nome da Máquina"]),
         "Frota":            df["Nome da Máquina"].str.extract(r"Frota (\d+)")[0],
@@ -350,6 +392,8 @@ def fig_donut(df):
 def fig_barras_h(df):
     agg = df.groupby(["Apontamento","Categoria"])["Horas"].sum().reset_index()
     agg = agg[agg["Horas"] > 0].sort_values("Horas")
+    if agg.empty:
+        return go.Figure()
     max_label = max(len(str(a)) for a in agg["Apontamento"]) * 7
     fig = go.Figure(go.Bar(
         x=agg["Horas"].round(1), y=agg["Apontamento"], orientation="h",
@@ -390,6 +434,8 @@ def fig_perdas(df):
             "Manobra","Manutenção Programada","Abastecimento"]
     agg  = df[df["Apontamento"].isin(cats)].groupby("Apontamento")["Horas"].sum()
     agg  = agg[agg>0].sort_values()
+    if agg.empty:
+        return go.Figure()
     max_label = max(len(str(a)) for a in agg.index) * 7
     fig = go.Figure(go.Bar(
         x=agg.values.round(1), y=agg.index, orientation="h",
