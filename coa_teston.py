@@ -43,7 +43,7 @@ SP_TENANT_ID      = _s("SP_TENANT_ID")
 SP_CLIENT_ID      = _s("SP_CLIENT_ID")
 SP_CLIENT_SECRET  = _s("SP_CLIENT_SECRET")
 SP_SITE_URL       = _s("SP_SITE_URL",       "https://metalcana.sharepoint.com/sites/MSCOLHEITA")
-SP_VEICULOS_PATH  = _s("SP_VEICULOS_PATH",  "/VITOR/AGRITEL/Veículos AGRITEL.xlsx")
+SP_VEICULOS_PATH  = _s("SP_VEICULOS_PATH",  "/VITOR/AGRITEL/Veículos_Agritel.xlsx")
 SP_FROTAS_CC_PATH = _s("SP_FROTAS_CC_PATH", "/VITOR/AGRITEL/Frotas_CentroDeCusto.xlsx")
 
 # Banco de dados consolidado (criado na outra conversa, 01/04→hoje, 1 linha/máquina/dia)
@@ -638,27 +638,27 @@ with st.sidebar:
     st.markdown("### Dados SharePoint")
     fonte = st.radio("Fonte",["SharePoint (auto)","Upload manual"],label_visibility="collapsed")
 
-    sp_data   = {}
-    apt_bytes = None
+    sp_data = {}
 
     if fonte == "SharePoint (auto)":
         with st.spinner("Conectando SharePoint..."):
             sp_data = load_from_sharepoint()
-        apt_bytes = sp_data.get("apt")
-        if apt_bytes:
+        if sp_data.get("apt_consol"):
             st.success("✓ Conectado")
         else:
-            st.error("Falha ao carregar apontamentos.")
+            st.error("Falha ao carregar consolidado. Verifique os paths nos secrets.")
     else:
-        up_apt  = st.file_uploader("XLSX — Apontamentos",     type=["xlsx","csv"],key="ua")
-        up_veic = st.file_uploader("XLSX — Veículos AGRITEL", type=["xlsx","csv"],key="uv")
-        up_cc   = st.file_uploader("XLSX — Frotas CC",        type=["xlsx","csv"],key="uc")
-        apt_bytes = up_apt.read() if up_apt else None
-        if up_veic: sp_data["veiculos"]  = up_veic.read()
-        if up_cc:   sp_data["frotas_cc"] = up_cc.read()
+        up_apt  = st.file_uploader("XLSX — Apontamentos Consolidado", type=["xlsx","csv"],key="ua")
+        up_perf = st.file_uploader("XLSX — Performance Consolidado",  type=["xlsx","csv"],key="up")
+        up_veic = st.file_uploader("XLSX — Veículos Agritel",         type=["xlsx","csv"],key="uv")
+        up_cc   = st.file_uploader("XLSX — Frotas CC",                type=["xlsx","csv"],key="uc")
+        if up_apt:  sp_data["apt_consol"]  = up_apt.read()
+        if up_perf: sp_data["perf_consol"] = up_perf.read()
+        if up_veic: sp_data["veiculos"]    = up_veic.read()
+        if up_cc:   sp_data["frotas_cc"]   = up_cc.read()
 
-    if not apt_bytes:
-        st.warning("Aguardando apontamentos.xlsx")
+    if not sp_data.get("apt_consol"):
+        st.warning("Aguardando APONTAMENTOS_CONSOLIDADO.xlsx")
         st.stop()
 
     # ── Cadastro de frotas ────────────────────────────────────────────────────
