@@ -17,7 +17,8 @@ SECRETS necessários:
   SP_VEICULOS_PATH = "/VITOR/AGRITEL/Veículos AGRITEL.xlsx"
   SP_FROTAS_CC_PATH= "/VITOR/AGRITEL/Frotas_CentroDeCusto.xlsx"
   SP_PERIODO_PATH  = "/VITOR/AGRITEL/periodo_agritel.jpg"   (opcional)
-  AGRITEL_API_KEY  = "69d65ab7023281608700eedd"
+  SP_APT_CONSOL    = "/VITOR/AGRITEL/APONTAMENTOS_CONSOLIDADO.xlsx"
+  SP_PERF_CONSOL   = "/VITOR/AGRITEL/PERFORMANCE_CONSOLIDADO.xlsx"
   AGRITEL_API_URL  = "https://api.agritel.com.br"           (opcional)
   APP_TIPO         = "colheita"   # "colheita" | "agro"
   DASHBOARD_SENHA_HASH = "<sha256>"
@@ -42,13 +43,12 @@ SP_TENANT_ID      = _s("SP_TENANT_ID")
 SP_CLIENT_ID      = _s("SP_CLIENT_ID")
 SP_CLIENT_SECRET  = _s("SP_CLIENT_SECRET")
 SP_SITE_URL       = _s("SP_SITE_URL",       "https://metalcana.sharepoint.com/sites/MSCOLHEITA")
-SP_APT_PATH       = _s("SP_APT_PATH",       "/VITOR/AGRITEL/apontamentos.xlsx")
-SP_VEICULOS_PATH  = _s("SP_VEICULOS_PATH",  "/VITOR/AGRITEL/Veículos_Agritel.xlsx")
+SP_VEICULOS_PATH  = _s("SP_VEICULOS_PATH",  "/VITOR/AGRITEL/Veículos AGRITEL.xlsx")
 SP_FROTAS_CC_PATH = _s("SP_FROTAS_CC_PATH", "/VITOR/AGRITEL/Frotas_CentroDeCusto.xlsx")
-SP_PERIODO_PATH   = _s("SP_PERIODO_PATH",   "/VITOR/AGRITEL/periodo_agritel.jpg")
 
-AGRITEL_API_KEY   = _s("AGRITEL_API_KEY",   "69d65ab7023281608700eedd")
-AGRITEL_API_URL   = _s("AGRITEL_API_URL",   "https://api.agritel.com.br")
+# Banco de dados consolidado (criado na outra conversa, 01/04→hoje, 1 linha/máquina/dia)
+SP_APT_CONSOL     = _s("SP_APT_CONSOL",  "/VITOR/AGRITEL/APONTAMENTOS_CONSOLIDADO.xlsx")
+SP_PERF_CONSOL    = _s("SP_PERF_CONSOL", "/VITOR/AGRITEL/PERFORMANCE_CONSOLIDADO.xlsx")
 
 SENHA_HASH = _s("DASHBOARD_SENHA_HASH", hashlib.sha256("teston2026".encode()).hexdigest())
 
@@ -198,11 +198,11 @@ def _read_df(content):
     return pd.read_csv(io.BytesIO(content))
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SHAREPOINT — só apontamentos, veículos e CC (sem performance.xlsx)
+# SHAREPOINT — carrega veículos, CC e os dois consolidados
 # ══════════════════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=300)   # 5 min: arquivos mudam 1x/dia pela rotina
 def load_from_sharepoint():
-    result = {k: None for k in ("apt","veiculos","frotas_cc","periodo_img")}
+    result = {k: None for k in ("apt_consol","perf_consol","veiculos","frotas_cc")}
     try:
         import requests as req
         tok = req.post(
@@ -222,146 +222,159 @@ def load_from_sharepoint():
             enc = quote(path, safe="/")
             try:
                 r = req.get(f"https://graph.microsoft.com/v1.0/drives/{did}/root:{enc}:/content",
-                            headers=h, timeout=30)
+                            headers=h, timeout=60)
                 r.raise_for_status()
                 return r.content
             except Exception as e:
                 st.warning(f"⚠️ SharePoint: `{path}` — {e}")
                 return None
 
-        result["apt"]        = _dl(SP_APT_PATH)
-        result["veiculos"]   = _dl(SP_VEICULOS_PATH)
-        result["frotas_cc"]  = _dl(SP_FROTAS_CC_PATH)
-        result["periodo_img"]= _dl(SP_PERIODO_PATH)
+        result["apt_consol"]  = _dl(SP_APT_CONSOL)
+        result["perf_consol"] = _dl(SP_PERF_CONSOL)
+        result["veiculos"]    = _dl(SP_VEICULOS_PATH)
+        result["frotas_cc"]   = _dl(SP_FROTAS_CC_PATH)
     except Exception as e:
         st.error(f"❌ SharePoint: {e}")
     return result
 
+
 # ══════════════════════════════════════════════════════════════════════════════
-# AGRITEL API  — operational-report (substituiu performance.xlsx)
+# CARREGAMENTO DOS CONSOLIDADOS (filtrado por data no app)
 # ══════════════════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=600)
-def _api_chunk(start_iso: str, end_iso: str) -> list | None:
-    """Uma chamada à API (≤15 dias). Cacheada 10 min (rate limit da API)."""
-    import requests as req
-    try:
-        r = req.get(
-            f"{AGRITEL_API_URL}/telemetry-integration/operational-report",
-            headers={"X-Api-Key": AGRITEL_API_KEY},
-            params={"startTime": start_iso, "endTime": end_iso},
-            timeout=30,
-        )
-        if r.status_code == 429:
-            retry = r.headers.get("Retry-After", "600")
-            st.warning(f"⏳ Rate limit API Agritel — aguarde {retry}s e atualize a página.")
-            return None
-        r.raise_for_status()
-        return r.json().get("items", [])
-    except Exception as e:
-        st.warning(f"⚠️ Agritel API: {e}")
-        return None
+@st.cache_data
+def _load_apt_raw(content: bytes) -> pd.DataFrame:
+    """Lê APONTAMENTOS_CONSOLIDADO completo e parse de datas. Cache permanente."""
+    df = _read_df(content)
+    # Colunas: Data | Name (=Apontamento) | DeviceId | Code | Soma de Diff
+    df.columns = ["Data", "Apontamento", "DeviceId", "Codigo", "Horas"]
+    df["Data"]  = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
+    df["Horas"] = pd.to_numeric(df["Horas"], errors="coerce").fillna(0)
+    df["Codigo"]= df["Codigo"].astype(str)
+    return df.dropna(subset=["Data"])
 
 
-def fetch_agritel(data_ini: date, data_fim: date) -> tuple[list, bool]:
-    """
-    Busca o período completo, quebrando em chunks de até 15 dias.
-    UTC = local MS (UTC-4) + 4h  →  dia agr. 07:00 local = 11:00 UTC
-    Retorna (items_merged, sucesso_total).
-    """
-    # Converter para UTC
-    start_utc = datetime(data_ini.year, data_ini.month, data_ini.day, 7, 0, 0) + TZ_OFFSET
-    end_utc   = datetime(data_fim.year, data_fim.month, data_fim.day, 6, 59, 59) + TZ_OFFSET + timedelta(days=1)
-
-    # Quebrar em chunks ≤15 dias
-    chunks, cur = [], start_utc
-    while cur < end_utc:
-        nxt = min(cur + timedelta(days=15), end_utc)
-        chunks.append((cur, nxt))
-        cur = nxt
-
-    merged: dict[str, dict] = {}
-    ok = True
-
-    for cs, ce in chunks:
-        items = _api_chunk(
-            cs.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            ce.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        )
-        if items is None:
-            ok = False
-            continue
-        for item in items:
-            did = item["deviceId"]
-            if did not in merged:
-                merged[did] = {**item}
-            else:
-                b = merged[did]
-                # Somar campos acumulativos
-                for f in ("engineOnSeconds","idlingSeconds","maneuveringSeconds",
-                          "workingSeconds","dislocatingSeconds","fuelConsumptionLiters"):
-                    b[f] = b.get(f,0) + item.get(f,0)
-                # Máximos de temperatura
-                for f in ("engineCoolantTemperatureMaxCelsius","hydraulicOilTemperatureMaxCelsius",
-                          "engineFuelRateMaxLitersPerHour"):
-                    b[f] = max(b.get(f,0), item.get(f,0))
-                # Média de taxa de consumo (média simples entre chunks)
-                for f in ("engineCoolantTemperatureAvgCelsius","hydraulicOilTemperatureAvgCelsius",
-                          "engineFuelRateAvgLitersPerHour"):
-                    b[f] = (b.get(f,0) + item.get(f,0)) / 2
-                # Horímetro: manter start do primeiro chunk, end do último
-                b["elevatorHourmeterEnd"] = item.get("elevatorHourmeterEnd", b.get("elevatorHourmeterEnd",0))
-                b["engineHourmeterEnd"]   = item.get("engineHourmeterEnd",   b.get("engineHourmeterEnd",0))
-
-    return list(merged.values()), ok
+@st.cache_data
+def _load_perf_raw(content: bytes) -> pd.DataFrame:
+    """Lê PERFORMANCE_CONSOLIDADO completo. Cache permanente."""
+    df = _read_df(content)
+    # Primeira coluna é Data, o restante são as colunas do performance.xlsx original
+    if "Data" not in df.columns and df.columns[0] != "Data":
+        # Tentar detectar coluna de data
+        date_col = _find_col(df, ["data","date"])
+        if date_col and date_col != df.columns[0]:
+            cols = [date_col] + [c for c in df.columns if c != date_col]
+            df = df[cols]
+    df = df.rename(columns={df.columns[0]: "Data"})
+    df["Data"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
+    return df.dropna(subset=["Data"])
 
 
-def build_perf_df(items: list, device_map: dict, tipo_map: dict, filtrar_tipo: str) -> pd.DataFrame:
-    """Converte resposta da API no mesmo formato de DataFrame do código anterior."""
-    rows = []
-    for item in items:
-        did  = item.get("deviceId","")
-        tipo = tipo_map.get(did, "agro")
-        if tipo != filtrar_tipo:
-            continue
-        nome    = device_map.get(did, item.get("deviceName", did))
-        m = re.search(r"\d+", nome)
-        frota_n = m.group() if m else ""
-        # Horímetro elevador = diferença entre fim e início do período
-        elev_h  = (item.get("elevatorHourmeterEnd",0) - item.get("elevatorHourmeterStart",0))
-        rows.append({
-            "NomeFrota":        nome,
-            "NomeCompleto":     item.get("deviceName", nome),
-            "Frota":            frota_n,
-            "TempoMotorLigado": item.get("engineOnSeconds",0)     / 3600,
-            "TempoTrabalho":    item.get("workingSeconds",0)       / 3600,
-            "TempoManobra":     item.get("maneuveringSeconds",0)   / 3600,
-            "TempoOcioso":      item.get("idlingSeconds",0)        / 3600,
-            "TempoDeslocando":  item.get("dislocatingSeconds",0)   / 3600,
-            "TempoElevador":    max(0.0, elev_h),
-            "ConsumoTotal":     item.get("fuelConsumptionLiters",0),
-            "ConsumoTrabalho":  item.get("fuelConsumptionLiters",0),
-            "TaxaMedTrab":      item.get("engineFuelRateAvgLitersPerHour",0),
-            "TaxaMedConsumo":   item.get("engineFuelRateAvgLitersPerHour",0),
-            "TempMaxMotor":     item.get("engineCoolantTemperatureMaxCelsius",0),
-            "TempMedMotor":     item.get("engineCoolantTemperatureAvgCelsius",0),
-            "TempMinMotor":     0,
-            "TempMaxOleo":      item.get("hydraulicOilTemperatureMaxCelsius",0),
-            "TempMedOleo":      item.get("hydraulicOilTemperatureAvgCelsius",0),
-            "TempMinOleo":      0,
-            "CargaMed":         0, "CargaMax":     0,
-            "VelocidadeMed":    0, "VelocidadeMax":0,
-            "RpmMotor":         0, "RpmExtMed":    0,
-            "PressaoMed":       0, "ReversoIndustrial": 0,
-            "Odometro":         0,
-        })
-    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=[
-        "NomeFrota","NomeCompleto","Frota","TempoMotorLigado","TempoTrabalho",
-        "TempoManobra","TempoOcioso","TempoDeslocando","TempoElevador",
-        "ConsumoTotal","ConsumoTrabalho","TaxaMedTrab","TaxaMedConsumo",
-        "TempMaxMotor","TempMedMotor","TempMinMotor","TempMaxOleo","TempMedOleo","TempMinOleo",
-        "CargaMed","CargaMax","VelocidadeMed","VelocidadeMax",
-        "RpmMotor","RpmExtMed","PressaoMed","ReversoIndustrial","Odometro",
-    ])
+def filter_apt(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
+               device_map: dict, tipo_map: dict, frente_map: dict, tipo_maq_map: dict,
+               filtrar_tipo: str,
+               frentes_sel: list | None = None,
+               tipos_maq_sel: list | None = None) -> pd.DataFrame:
+    """Filtra apontamentos consolidados pelo período, tipo de frota, frente e tipo de máquina."""
+    mask = (df_raw["Data"].dt.date >= data_ini) & (df_raw["Data"].dt.date <= data_fim)
+    df = df_raw[mask].copy()
+    df = df.groupby(["Apontamento","DeviceId","Codigo"], as_index=False)["Horas"].sum()
+    df["Categoria"] = df["Apontamento"].map(CATEGORIA_MAP).fillna("Sem Apontamento")
+    df["Frota"]     = df["DeviceId"].map(device_map).fillna(df["DeviceId"])
+    df["Tipo"]      = df["DeviceId"].map(tipo_map).fillna("agro")
+    df["Frente"]    = df["DeviceId"].map(frente_map).fillna("Sem frente")
+    df["TipoMaq"]   = df["DeviceId"].map(tipo_maq_map).fillna("Outro")
+    df = df[df["Tipo"] == filtrar_tipo].copy()
+    if frentes_sel:
+        df = df[df["Frente"].isin(frentes_sel)]
+    if tipos_maq_sel:
+        df = df[df["TipoMaq"].isin(tipos_maq_sel)]
+    return df
+
+
+def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
+                device_map: dict, tipo_map: dict, frente_map: dict, tipo_maq_map: dict,
+                filtrar_tipo: str,
+                frentes_sel: list | None = None,
+                tipos_maq_sel: list | None = None) -> pd.DataFrame:
+    """Agrega performance consolidada pelo período, por frota."""
+    mask = (df_raw["Data"].dt.date >= data_ini) & (df_raw["Data"].dt.date <= data_fim)
+    df = df_raw[mask].copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    def col(name):
+        return df[name].apply(parse_num) if name in df.columns else pd.Series(0.0, index=df.index)
+
+    def _tempo(name):
+        if name not in df.columns: return pd.Series(0.0, index=df.index)
+        return df[name].apply(lambda v: parse_num(v) if isinstance(v,str) else (float(v) if pd.notna(v) else 0.0))
+
+    # Montar DataFrame estruturado
+    tmp = pd.DataFrame({
+        "NomeFrota":        df["Nome da Máquina"].str.extract(r"(Frota \d+)")[0].fillna(df["Nome da Máquina"]),
+        "DeviceId":         df["Nome da Máquina"].astype(str),   # fallback para join
+        "TempoMotorLigado": _tempo("Tempo Motor Ligado:"),
+        "TempoTrabalho":    _tempo("Tempo em Trabalho"),
+        "TempoManobra":     _tempo("Tempo em Manobra:"),
+        "TempoOcioso":      _tempo("Tempo com Motor Ocioso:"),
+        "TempoElevador":    _tempo("Tempo de Elevador Ligado"),
+        "ConsumoTotal":     col("Consumo Total:"),
+        "ConsumoTrabalho":  col("Consumo em Trabalho:"),
+        "TaxaMedTrab":      col("Taxa Média de Consumo de Combustível em Trabalho"),
+        "TaxaMedConsumo":   col("Taxa Média de Consumo de Combustível"),
+        "TempMaxMotor":     col("Temperatura Máxima do Motor"),
+        "TempMedMotor":     col("Temperatura Média do Motor"),
+        "TempMinMotor":     col("Temperatura Mínima do Motor"),
+        "TempMaxOleo":      col("Temperatura Máxima do Óleo Hidráulico"),
+        "TempMedOleo":      col("Temperatura Média do Óleo Hidráulico"),
+        "TempMinOleo":      col("Temperatura Mínima do Óleo Hidráulico"),
+        "CargaMed":         col("Carga Média do Motor"),
+        "CargaMax":         col("Carga Máxima do Motor"),
+        "VelocidadeMed":    col("Velocidade Média de Trabalho:"),
+        "VelocidadeMax":    col("Velocidade Máxima de Trabalho"),
+        "RpmMotor":         col("Rpm Médio em Trabalho:"),
+        "RpmExtMed":        col("Rpm Médio de Exaustor Primário em Trabalho"),
+        "PressaoMed":       col("Pressão Média de Corte Base em Trabalho"),
+        "ReversoIndustrial":col("Número de Embuchamentos Detectados"),
+        "Odometro":         col("Odômetro de Trabalho"),
+    })
+
+    # Frente e TipoMaq via nome_frota → device lookup
+    nome_to_frente  = {v: frente_map.get(k,"Sem frente") for k,v in device_map.items()}
+    nome_to_tipomaq = {v: tipo_maq_map.get(k,"Outro")    for k,v in device_map.items()}
+    nome_to_tipo    = {v: tipo_map.get(k,"agro")          for k,v in device_map.items()}
+
+    tmp["Tipo"]    = tmp["NomeFrota"].map(nome_to_tipo).fillna("agro")
+    tmp["Frente"]  = tmp["NomeFrota"].map(nome_to_frente).fillna("Sem frente")
+    tmp["TipoMaq"] = tmp["NomeFrota"].map(nome_to_tipomaq).fillna("Outro")
+
+    tmp = tmp[tmp["Tipo"] == filtrar_tipo]
+    if frentes_sel:
+        tmp = tmp[tmp["Frente"].isin(frentes_sel)]
+    if tipos_maq_sel:
+        tmp = tmp[tmp["TipoMaq"].isin(tipos_maq_sel)]
+
+    if tmp.empty:
+        return pd.DataFrame()
+
+    # Agregar por frota (soma de horas/consumo, média de temperatura/velocidade)
+    agg_sum  = ["TempoMotorLigado","TempoTrabalho","TempoManobra","TempoOcioso",
+                "TempoElevador","ConsumoTotal","ConsumoTrabalho","ReversoIndustrial","Odometro"]
+    agg_max  = ["TempMaxMotor","TempMaxOleo","CargaMax","VelocidadeMax"]
+    agg_mean = ["TaxaMedTrab","TaxaMedConsumo","TempMedMotor","TempMedOleo","TempMinMotor",
+                "TempMinOleo","CargaMed","VelocidadeMed","RpmMotor","RpmExtMed","PressaoMed"]
+
+    result = tmp.groupby("NomeFrota").agg(
+        **{c: (c,"sum")  for c in agg_sum  if c in tmp.columns},
+        **{c: (c,"max")  for c in agg_max  if c in tmp.columns},
+        **{c: (c,"mean") for c in agg_mean if c in tmp.columns},
+    ).reset_index()
+
+    result["Frota"]       = result["NomeFrota"].str.extract(r"Frota (\d+)")[0].fillna("")
+    result["NomeCompleto"] = result["NomeFrota"]
+    return result
+
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CARREGAMENTO — veículos, CC e apontamentos
@@ -371,7 +384,7 @@ def load_veiculos(content: bytes) -> pd.DataFrame:
     df = _read_df(content)
     id_c   = _find_col(df,["id do dispositivo","deviceid","device id","id"])
     nome_c = _find_col(df,["nome da maquina","nome","name","maquina"])
-    grp_c  = _find_col(df,["grupo de maquinas","grupo","group","tipo","descri"])
+    grp_c  = _find_col(df,["grupo de maquinas","grupo","group","tipo"])
     if not id_c:   id_c   = df.columns[0]
     if not nome_c: nome_c = df.columns[min(1,len(df.columns)-1)]
     r = pd.DataFrame({
@@ -379,53 +392,87 @@ def load_veiculos(content: bytes) -> pd.DataFrame:
         "Nome":     df[nome_c].astype(str).str.strip(),
         "Grupo":    df[grp_c].astype(str).str.strip() if grp_c else "",
     })
-    def _tipo(row):
-        txt = _norm(row["Nome"]) + " " + _norm(row["Grupo"])
-        return "colheita" if any(k in txt for k in KEYWORDS_COLHEITA) else "agro"
-    r["Tipo"] = r.apply(_tipo, axis=1)
+    # Tipo de máquina derivado do nome (colhedora / transbordo / trator / outro)
+    def _tipo_maq(nome):
+        n = _norm(nome)
+        if "colhedora" in n:  return "Colhedora"
+        if "transbordo" in n: return "Transbordo"
+        if "trator" in n or "jhon deere" in n or "john deere" in n: return "Trator"
+        return "Outro"
+    r["TipoMaq"] = r["Nome"].apply(_tipo_maq)
     return r
+
 
 @st.cache_data
 def load_frotas_cc(content: bytes) -> pd.DataFrame:
+    """
+    Lê Frotas_CentroDeCusto.xlsx.
+    Estrutura real: FROTA (número) | CENTRO DE CUSTO (ex: "RIO AMAMBAI - F. FIRU")
+    """
     df = _read_df(content)
-    nome_c = _find_col(df,["nome da maquina","nome","frota","maquina","name"])
-    desc_c = _find_col(df,["descri","tipo","grupo"])
-    cc_c   = _find_col(df,["centro de custo","cc","cost"])
-    if not nome_c: nome_c = df.columns[0]
-    r = pd.DataFrame({
-        "Nome":     df[nome_c].astype(str).str.strip(),
-        "Descricao":df[desc_c].astype(str).str.strip() if desc_c else "",
-        "CC":       df[cc_c].astype(str).str.strip()   if cc_c   else "",
-    })
-    def _tipo(row):
-        txt = _norm(row["Descricao"]) + " " + _norm(row["Nome"])
-        return "colheita" if any(k in txt for k in KEYWORDS_COLHEITA) else "agro"
-    r["Tipo"] = r.apply(_tipo, axis=1)
-    return r
+    frota_c = _find_col(df, ["frota"])
+    cc_c    = _find_col(df, ["centro de custo","centro","cc"])
+    if not frota_c: frota_c = df.columns[0]
+    if not cc_c:    cc_c    = df.columns[1] if len(df.columns) > 1 else df.columns[0]
 
-def build_device_map(veiculos_df):
+    r = pd.DataFrame({
+        "Frota":  df[frota_c].astype(str).str.strip().str.lstrip("0"),  # "1262", "997"
+        "CC":     df[cc_c].astype(str).str.strip(),
+    })
+
+    def _tipo_cc(cc):
+        cu = cc.upper()
+        return "agro" if (cu.startswith("AGRO") or cu.startswith("PREPARO")) else "colheita"
+
+    r["Tipo"]   = r["CC"].apply(_tipo_cc)
+    r["Frente"] = r["CC"]   # frente = valor completo do CC
+    return r.dropna(subset=["Frota"])
+
+
+def build_device_map(veiculos_df, frotas_cc_df=None):
+    """
+    Retorna (device_map, tipo_map, frente_map, tipo_maq_map).
+      device_map   : DeviceId → "Frota 1262"
+      tipo_map     : DeviceId → "colheita" | "agro"
+      frente_map   : DeviceId → "RIO AMAMBAI - F. FIRU"
+      tipo_maq_map : DeviceId → "Colhedora" | "Transbordo" | "Trator" | "Outro"
+    """
     if veiculos_df is None or veiculos_df.empty:
-        return DEVICE_MAP_FALLBACK.copy(), {k:"colheita" for k in DEVICE_MAP_FALLBACK}
-    dm, tm = {}, {}
+        dm = DEVICE_MAP_FALLBACK.copy()
+        return (dm,
+                {k: "colheita"   for k in dm},
+                {k: "Sem frente" for k in dm},
+                {k: "Colhedora"  for k in dm})
+
+    # CC lookup: frota_number_str → (tipo, frente)
+    cc_lkp = {}
+    if frotas_cc_df is not None and not frotas_cc_df.empty:
+        for _, row in frotas_cc_df.iterrows():
+            fr = str(row["Frota"]).lstrip("0") or "0"
+            cc_lkp[fr] = (row["Tipo"], row["Frente"])
+
+    dm, tm, fm, mm = {}, {}, {}, {}
     for _, row in veiculos_df.iterrows():
         did  = str(row["DeviceId"])
         nome = str(row["Nome"])
         m    = re.search(r"[Ff]rota\s*(\d+)", nome)
-        dm[did] = f"Frota {m.group(1)}" if m else nome
-        tm[did] = row["Tipo"]
-    return dm, tm
+        frota_n    = m.group(1) if m else ""
+        nome_curto = f"Frota {frota_n}" if frota_n else nome
 
-@st.cache_data
-def load_apontamentos(content: bytes, device_map: dict, tipo_map: dict, filtrar_tipo: str):
-    df = _read_df(content)
-    df.columns = ["Apontamento","DeviceId","Codigo","HorasTexto"]
-    df["Horas"]     = df["HorasTexto"].apply(parse_horas)
-    df["Codigo"]    = df["Codigo"].astype(str).replace("10.004","10.003")
-    df = df.groupby(["Apontamento","DeviceId","Codigo"],as_index=False)["Horas"].sum()
-    df["Categoria"] = df["Apontamento"].map(CATEGORIA_MAP).fillna("Sem Apontamento")
-    df["Frota"]     = df["DeviceId"].map(device_map).fillna(df["DeviceId"])
-    df["Tipo"]      = df["DeviceId"].map(tipo_map).fillna("agro")
-    return df[df["Tipo"] == filtrar_tipo].copy()
+        dm[did] = nome_curto
+        mm[did] = row.get("TipoMaq", "Outro")
+
+        if frota_n and frota_n in cc_lkp:
+            tm[did], fm[did] = cc_lkp[frota_n]
+        else:
+            # keyword fallback
+            txt = _norm(nome)
+            tm[did] = "colheita" if any(k in txt for k in KEYWORDS_COLHEITA) else "agro"
+            fm[did] = "Sem frente"
+
+    return dm, tm, fm, mm
+
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
@@ -617,8 +664,7 @@ with st.sidebar:
     # ── Cadastro de frotas ────────────────────────────────────────────────────
     veic_df = load_veiculos(sp_data["veiculos"]) if sp_data.get("veiculos") else None
     cc_df   = load_frotas_cc(sp_data["frotas_cc"]) if sp_data.get("frotas_cc") else None
-    device_map, tipo_map = build_device_map(veic_df)
-    frotas_colheita = {v for k,v in device_map.items() if tipo_map.get(k)=="colheita"}
+    device_map, tipo_map, frente_map, tipo_maq_map = build_device_map(veic_df, cc_df)
 
     st.markdown("---")
 
@@ -633,7 +679,7 @@ with st.sidebar:
     )
     APP_TIPO = "colheita" if "Colheita" in tipo_opcao else "agro"
     CONF     = TIPO_CFG[APP_TIPO]
-    st.session_state["tipo_operacao_val"] = APP_TIPO   # persiste para o próximo rerun
+    st.session_state["tipo_operacao_val"] = APP_TIPO
 
     st.markdown("---")
     st.markdown("### Período")
@@ -654,43 +700,75 @@ with st.sidebar:
         st.stop()
 
     dias_periodo = (data_fim - data_ini).days + 1
-    period_h     = dias_periodo * 24.0   # horas totais do período (por máquina)
-
-    n_chunks = max(1, -(-dias_periodo // 15))   # ceil division
+    period_h     = dias_periodo * 24.0
     st.caption(
         f"**{data_ini.strftime('%d/%m/%Y')}** – **{data_fim.strftime('%d/%m/%Y')}**  \n"
         f"**{dias_periodo}** dias · **{period_h:.0f}h**/máquina"
-        + (f" · {n_chunks} chamadas API" if n_chunks > 1 else "")
     )
 
-    # ── Buscar dados da API Agritel ───────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### API Agritel")
-    with st.spinner(f"Buscando {dias_periodo} dias da API..."):
-        api_items, api_ok = fetch_agritel(data_ini, data_fim)
+    # ── Montar DataFrames a partir dos consolidados ───────────────────────────
+    apt_raw  = sp_data.get("apt_consol")
+    perf_raw = sp_data.get("perf_consol")
 
-    if api_items:
-        st.markdown(
-            f'<div class="api-badge">✓ {len(api_items)} máquina(s) · cache 10 min</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.warning("⚠️ API sem dados — verifique datas ou rate limit.")
+    if not apt_raw:
+        st.error("APONTAMENTOS_CONSOLIDADO.xlsx não carregado.")
+        st.stop()
 
-    # ── Montar DataFrames ─────────────────────────────────────────────────────
-    df_apt  = load_apontamentos(apt_bytes, device_map, tipo_map, APP_TIPO)
-    df_perf = build_perf_df(api_items, device_map, tipo_map, APP_TIPO)
-    disp_df = calc_disponibilidade(df_apt)
+    df_apt_raw  = _load_apt_raw(apt_raw)
+    df_perf_raw = _load_perf_raw(perf_raw) if perf_raw else pd.DataFrame()
 
-    # ── Imagem do período (opcional) ──────────────────────────────────────────
-    if sp_data.get("periodo_img"):
-        with st.expander("📋 Ref. Agritel"):
-            st.image(sp_data["periodo_img"], use_container_width=True)
-
+    # ── Filtros de Frente e Tipo de Máquina ──────────────────────────────────
     st.markdown("---")
     st.markdown("### Filtros")
+
+    # Frentes disponíveis para o tipo selecionado
+    frentes_disponiveis = sorted(set(
+        v for k,v in frente_map.items()
+        if tipo_map.get(k) == APP_TIPO and v != "Sem frente"
+    ))
+    frentes_sel = st.multiselect(
+        "Frente", frentes_disponiveis,
+        default=frentes_disponiveis,
+        key="frentes_sel",
+        placeholder="Todas as frentes"
+    ) or frentes_disponiveis  # se vazio = todas
+
+    # Tipos de máquina disponíveis
+    tipos_maq_disponiveis = sorted(set(
+        v for k,v in tipo_maq_map.items()
+        if tipo_map.get(k) == APP_TIPO and v != "Outro"
+    ))
+    if not tipos_maq_disponiveis:
+        tipos_maq_disponiveis = ["Colhedora","Transbordo","Trator"]
+    tipos_maq_sel = st.multiselect(
+        "Tipo de máquina", tipos_maq_disponiveis,
+        default=tipos_maq_disponiveis,
+        key="tipos_maq_sel",
+        placeholder="Todos os tipos"
+    ) or tipos_maq_disponiveis
+
+    # Aplicar filtros aos dados
+    df_apt  = filter_apt(df_apt_raw,  data_ini, data_fim,
+                         device_map, tipo_map, frente_map, tipo_maq_map,
+                         APP_TIPO, frentes_sel, tipos_maq_sel)
+    df_perf = filter_perf(df_perf_raw, data_ini, data_fim,
+                          device_map, tipo_map, frente_map, tipo_maq_map,
+                          APP_TIPO, frentes_sel, tipos_maq_sel)
+    disp_df = calc_disponibilidade(df_apt)
+
+    # Frota individual (após os filtros de frente/tipo)
     frotas_disp = ["Todas"] + sorted(df_apt["Frota"].unique().tolist())
-    frota_sel   = st.selectbox("Frota", frotas_disp)
+    frota_sel   = st.selectbox("Frota", frotas_disp, key="frota_sel")
+
+    # Indicador de cobertura do banco de dados
+    if not df_apt_raw.empty:
+        bd_min = df_apt_raw["Data"].min().strftime("%d/%m/%Y")
+        bd_max = df_apt_raw["Data"].max().strftime("%d/%m/%Y")
+        st.markdown(
+            f'<div class="api-badge">📦 BD: {bd_min} → {bd_max} '
+            f'· {len(df_apt_raw):,} registros</div>'.replace(",","."),
+            unsafe_allow_html=True,
+        )
 
     st.markdown("---")
     st.markdown("### Navegação")
