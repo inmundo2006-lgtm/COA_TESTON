@@ -823,12 +823,7 @@ elif pagina == "Por frota":
         st.markdown("**Temperaturas**")
         st.plotly_chart(fig_temperaturas(sub_perf.iloc[0]),
                         width="stretch", config={"displayModeBar": False})
-PYEOF
-echo "Arquivo escrito"
-Saída
 
-Arquivo escrito
-Concluído
 
 
 
