@@ -43,7 +43,7 @@ SP_CLIENT_ID      = _s("SP_CLIENT_ID")
 SP_CLIENT_SECRET  = _s("SP_CLIENT_SECRET")
 SP_SITE_URL       = _s("SP_SITE_URL",       "https://metalcana.sharepoint.com/sites/MSCOLHEITA")
 SP_APT_PATH       = _s("SP_APT_PATH",       "/VITOR/AGRITEL/apontamentos.xlsx")
-SP_VEICULOS_PATH  = _s("SP_VEICULOS_PATH",  "/VITOR/AGRITEL/Veículos AGRITEL.xlsx")
+SP_VEICULOS_PATH  = _s("SP_VEICULOS_PATH",  "/VITOR/AGRITEL/Veículos_Agritel.xlsx")
 SP_FROTAS_CC_PATH = _s("SP_FROTAS_CC_PATH", "/VITOR/AGRITEL/Frotas_CentroDeCusto.xlsx")
 SP_PERIODO_PATH   = _s("SP_PERIODO_PATH",   "/VITOR/AGRITEL/periodo_agritel.jpg")
 
