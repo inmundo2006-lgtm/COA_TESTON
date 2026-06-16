@@ -24,8 +24,8 @@ SP_TENANT_ID     = _secret("SP_TENANT_ID")
 SP_CLIENT_ID     = _secret("SP_CLIENT_ID")
 SP_CLIENT_SECRET = _secret("SP_CLIENT_SECRET")
 SP_SITE_URL      = _secret("SP_SITE_URL",   "https://metalcana.sharepoint.com/sites/MSCOLHEITA")
-SP_APT_PATH      = _secret("SP_APT_PATH",   "/sites/MSCOLHEITA/Documentos Compartilhados/VITOR/AGRITEL/apontamentos.xlsx")
-SP_PERF_PATH     = _secret("SP_PERF_PATH",  "/sites/MSCOLHEITA/Documentos Compartilhados/VITOR/AGRITEL/performance.xlsx")
+SP_APT_PATH      = _secret("SP_APT_PATH",   "/VITOR/AGRITEL/apontamentos.xlsx")
+SP_PERF_PATH     = _secret("SP_PERF_PATH",  "/VITOR/AGRITEL/performance.xlsx")
 SENHA_HASH       = _secret("DASHBOARD_SENHA_HASH",
                             hashlib.sha256("teston2026".encode()).hexdigest())
 
