@@ -50,6 +50,11 @@ SP_FROTAS_CC_PATH = _s("SP_FROTAS_CC_PATH", "/VITOR/AGRITEL/Frotas_CentroDeCusto
 SP_APT_CONSOL     = _s("SP_APT_CONSOL",  "/VITOR/AGRITEL/APONTAMENTOS_CONSOLIDADO.xlsx")
 SP_PERF_CONSOL    = _s("SP_PERF_CONSOL", "/VITOR/AGRITEL/PERFORMANCE_CONSOLIDADO.xlsx")
 
+# API Agritel — usada UMA VEZ por dia apenas para mapear DeviceId → DeviceName
+# (o Veículos_Agritel usa IMEI, não o DeviceId interno do Agritel)
+AGRITEL_API_KEY = _s("AGRITEL_API_KEY", "69d65ab7023281608700eedd")
+AGRITEL_API_URL = _s("AGRITEL_API_URL", "https://api.agritel.com.br")
+
 SENHA_HASH = _s("DASHBOARD_SENHA_HASH", hashlib.sha256("teston2026".encode()).hexdigest())
 
 # Fuso horário MS (UTC-4) — dia agrícola 07:00→06:59 local
@@ -196,6 +201,37 @@ def _read_df(content):
     if content[:4] == b"PK\x03\x04":
         return pd.read_excel(io.BytesIO(content), sheet_name=0)
     return pd.read_csv(io.BytesIO(content))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAPEAMENTO DeviceId → DeviceName  (via Agritel API, cache 24h)
+# O Veículos_Agritel usa IMEI (Placa) — diferente do DeviceId interno do Agritel.
+# ══════════════════════════════════════════════════════════════════════════════
+@st.cache_data(ttl=86400)
+def load_device_names_from_api() -> dict:
+    """
+    Retorna {DeviceId: DeviceName} — ex: {"671a43...": "Frota 1262 - Colhedora JD"}
+    Usa os últimos 7 dias; cache de 24h (dispositivos raramente mudam).
+    """
+    import requests as req
+    from datetime import datetime, timezone, timedelta
+    try:
+        end   = datetime.now(timezone.utc)
+        start = end - timedelta(days=7)
+        r = req.get(
+            f"{AGRITEL_API_URL}/telemetry-integration/operational-report",
+            headers={"X-Api-Key": AGRITEL_API_KEY},
+            params={"startTime": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "endTime":   end.strftime("%Y-%m-%dT%H:%M:%SZ")},
+            timeout=30,
+        )
+        if r.status_code == 200:
+            items = r.json().get("items", [])
+            return {i["deviceId"]: i["deviceName"] for i in items if "deviceId" in i}
+        if r.status_code == 429:
+            st.toast("⏳ Agritel rate limit — mapa usa fallback", icon="⚠️")
+    except Exception as e:
+        st.toast(f"⚠️ Agritel API: {e}", icon="⚠️")
+    return {}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SHAREPOINT — carrega veículos, CC e os dois consolidados
@@ -432,45 +468,69 @@ def load_frotas_cc(content: bytes) -> pd.DataFrame:
 def build_device_map(veiculos_df, frotas_cc_df=None):
     """
     Retorna (device_map, tipo_map, frente_map, tipo_maq_map).
-      device_map   : DeviceId → "Frota 1262"
-      tipo_map     : DeviceId → "colheita" | "agro"
-      frente_map   : DeviceId → "RIO AMAMBAI - F. FIRU"
-      tipo_maq_map : DeviceId → "Colhedora" | "Transbordo" | "Trator" | "Outro"
-    """
-    if veiculos_df is None or veiculos_df.empty:
-        dm = DEVICE_MAP_FALLBACK.copy()
-        return (dm,
-                {k: "colheita"   for k in dm},
-                {k: "Sem frente" for k in dm},
-                {k: "Colhedora"  for k in dm})
 
-    # CC lookup: frota_number_str → (tipo, frente)
-    cc_lkp = {}
+    Fonte dos nomes: Agritel API (DeviceId → "Frota 1262 - Colhedora JD") — cache 24h.
+    Veículos_Agritel usa IMEI (Placa), não DeviceId, portanto é usado só para TipoMaq.
+    Frotas_CentroDeCusto conecta frota_number → (tipo colheita/agro, frente).
+    """
+    # 1. DeviceId → DeviceName via API (cache 24h)
+    api_names = load_device_names_from_api()
+
+    # Fallback mínimo se API falhar
+    if not api_names:
+        api_names = DEVICE_MAP_FALLBACK.copy()
+
+    # 2. Veículos → TipoMaq por frota_name
+    # Nome (frota) → tipo_maq: "Colhedora" | "Transbordo" | "Trator" | "Outro"
+    nome_to_tipomaq: dict[str, str] = {}
+    if veiculos_df is not None and not veiculos_df.empty:
+        tipo_c = _find_col(veiculos_df, ["tipo"])
+        nome_c = _find_col(veiculos_df, ["nome"])
+        if nome_c and tipo_c:
+            for _, row in veiculos_df.iterrows():
+                n   = _norm(str(row[nome_c]))
+                tp  = str(row[tipo_c])
+                maq = ("Colhedora" if "colhedora" in _norm(tp) else
+                       "Transbordo" if ("transbordo" in _norm(tp) or "caminhao" in _norm(tp)) else
+                       "Trator" if ("trator" in _norm(tp) or "pul" in _norm(tp)) else "Outro")
+                # chave = "Frota 1262"
+                m = re.search(r"[Ff]rota\s*(\d+)", str(row[nome_c]))
+                if m:
+                    nome_to_tipomaq[f"Frota {m.group(1)}"] = maq
+
+    # 3. CC lookup: frota_number → (tipo_col, frente)
+    cc_lkp: dict[str, tuple] = {}
     if frotas_cc_df is not None and not frotas_cc_df.empty:
         for _, row in frotas_cc_df.iterrows():
             fr = str(row["Frota"]).lstrip("0") or "0"
             cc_lkp[fr] = (row["Tipo"], row["Frente"])
 
+    # 4. Montar os mapas finais
     dm, tm, fm, mm = {}, {}, {}, {}
-    for _, row in veiculos_df.iterrows():
-        did  = str(row["DeviceId"])
-        nome = str(row["Nome"])
-        m    = re.search(r"[Ff]rota\s*(\d+)", nome)
+    for did, dname in api_names.items():
+        m = re.search(r"[Ff]rota\s*(\d+)", str(dname))
         frota_n    = m.group(1) if m else ""
-        nome_curto = f"Frota {frota_n}" if frota_n else nome
+        nome_curto = f"Frota {frota_n}" if frota_n else str(dname)
 
         dm[did] = nome_curto
-        mm[did] = row.get("TipoMaq", "Outro")
+        mm[did] = nome_to_tipomaq.get(nome_curto, _tipo_maq_from_name(dname))
 
         if frota_n and frota_n in cc_lkp:
             tm[did], fm[did] = cc_lkp[frota_n]
         else:
-            # keyword fallback
-            txt = _norm(nome)
+            txt = _norm(str(dname))
             tm[did] = "colheita" if any(k in txt for k in KEYWORDS_COLHEITA) else "agro"
             fm[did] = "Sem frente"
 
     return dm, tm, fm, mm
+
+
+def _tipo_maq_from_name(name: str) -> str:
+    n = _norm(str(name))
+    if "colhedora" in n:  return "Colhedora"
+    if "transbordo" in n or "caminhao" in n: return "Transbordo"
+    if "trator" in n: return "Trator"
+    return "Outro"
 
 
 
