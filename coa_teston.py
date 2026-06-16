@@ -1,16 +1,33 @@
+
 """
 COA · TESTON — Dashboard Safra 2026/27
-Streamlit + Plotly
+Streamlit + Plotly | Login + SharePoint (Graph API) + ajustes v2
 """
 
-import re
-import io
-import pathlib
+import re, io, os, hashlib, pathlib
 import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CREDENCIAIS — configure via st.secrets (Streamlit Cloud) ou env vars
+# ══════════════════════════════════════════════════════════════════════════════
+def _secret(key: str, default: str = "") -> str:
+    try:
+        return st.secrets[key]
+    except Exception:
+        return os.environ.get(key, default)
+
+SP_TENANT_ID     = _secret("SP_TENANT_ID")
+SP_CLIENT_ID     = _secret("SP_CLIENT_ID")
+SP_CLIENT_SECRET = _secret("SP_CLIENT_SECRET")
+SP_SITE_URL      = _secret("SP_SITE_URL",   "https://metalcana.sharepoint.com/sites/MSCOLHEITA")
+SP_APT_PATH      = _secret("SP_APT_PATH",   "/sites/MSCOLHEITA/Documentos Compartilhados/VITOR/AGRITEL/apontamentos.xlsx")
+SP_PERF_PATH     = _secret("SP_PERF_PATH",  "/sites/MSCOLHEITA/Documentos Compartilhados/VITOR/AGRITEL/performance.xlsx")
+SENHA_HASH       = _secret("DASHBOARD_SENHA_HASH",
+                            hashlib.sha256("teston2026".encode()).hexdigest())
 
 # ── PAGE CONFIG ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -104,25 +121,57 @@ div[data-testid="metric-container"] { background: rgba(255,255,255,0.05); border
 """, unsafe_allow_html=True)
 
 
-# ── PARSERS ───────────────────────────────────────────────────────────────────
+# ── LOGIN ─────────────────────────────────────────────────────────────────────
+def check_login():
+    if st.session_state.get("autenticado"):
+        return
+    st.markdown("""
+    <div style="max-width:360px;margin:80px auto;text-align:center">
+      <h1 style="color:#a8c832;font-size:2rem">🌿 COA · TESTON</h1>
+      <p style="color:#888;margin-bottom:28px">Dashboard Safra 2026/27</p>
+    </div>
+    """, unsafe_allow_html=True)
+    col_c = st.columns([1, 2, 1])[1]
+    with col_c:
+        senha = st.text_input("Senha de acesso", type="password", key="senha_input",
+                              placeholder="Digite a senha...")
+        if st.button("Entrar", use_container_width=True, type="primary"):
+            if hashlib.sha256(senha.encode()).hexdigest() == SENHA_HASH:
+                st.session_state["autenticado"] = True
+                st.rerun()
+            else:
+                st.error("Senha incorreta.")
+    st.stop()
+
+check_login()
+
+
+# ── PARSERS — suportam CSV (string) e XLSX (numérico) ────────────────────────
 def parse_horas(txt) -> float:
+    if isinstance(txt, (int, float)):
+        return float(txt) if not (isinstance(txt, float) and np.isnan(txt)) else 0.0
     if not isinstance(txt, str):
-        return float(txt) if txt else 0.0
+        return 0.0
     m = re.search(r"([\d.,]+)\s*h", txt)
     if m:
         return float(m.group(1).replace(".", "").replace(",", "."))
     return 0.0
 
 def parse_num(txt) -> float:
+    if isinstance(txt, (int, float)):
+        return float(txt) if not (isinstance(txt, float) and np.isnan(txt)) else 0.0
     if not isinstance(txt, str):
-        return float(txt) if txt else 0.0
+        return 0.0
     cleaned = re.sub(r"[^\d,.]", "", txt).replace(".", "").replace(",", ".")
     try:
         return float(cleaned)
-    except:
+    except Exception:
         return 0.0
 
 def parse_tempo_perf(txt) -> float:
+    """Aceita float (XLSX) ou string 'Xh' / 'X,Yh' (CSV)."""
+    if isinstance(txt, (int, float)):
+        return float(txt) if not (isinstance(txt, float) and np.isnan(txt)) else 0.0
     if not isinstance(txt, str):
         return 0.0
     m = re.search(r"(\d+)[,.]?(\d*)\s*h", txt)
@@ -131,22 +180,88 @@ def parse_tempo_perf(txt) -> float:
     return float(m.group(1)) + (float(m.group(2)) / 60 if m.group(2) else 0.0)
 
 
+# ── SHAREPOINT — Microsoft Graph API ─────────────────────────────────────────
+@st.cache_data(ttl=600)   # cache 10 minutos
+def load_from_sharepoint() -> tuple:
+    """
+    Baixa os dois arquivos XLSX do SharePoint via Graph API REST.
+    Requer permissão Sites.Read.All no app Azure AD.
+    Retorna (apt_bytes, perf_bytes) ou (None, None) em caso de erro.
+    """
+    try:
+        import requests
+
+        # 1. Token OAuth2 via client credentials
+        token_resp = requests.post(
+            f"https://login.microsoftonline.com/{SP_TENANT_ID}/oauth2/v2.0/token",
+            data={
+                "grant_type":    "client_credentials",
+                "client_id":     SP_CLIENT_ID,
+                "client_secret": SP_CLIENT_SECRET,
+                "scope":         "https://graph.microsoft.com/.default",
+            },
+            timeout=15,
+        )
+        token_resp.raise_for_status()
+        headers = {"Authorization": f"Bearer {token_resp.json()['access_token']}"}
+
+        # 2. Site ID
+        hostname  = SP_SITE_URL.replace("https://", "").split("/")[0]
+        site_path = "/".join(SP_SITE_URL.replace("https://", "").split("/")[1:])
+        site_resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/sites/{hostname}:/{site_path}",
+            headers=headers, timeout=15,
+        )
+        site_resp.raise_for_status()
+        site_id = site_resp.json()["id"]
+
+        # 3. Drive ID (biblioteca padrão do site)
+        drive_resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive",
+            headers=headers, timeout=15,
+        )
+        drive_resp.raise_for_status()
+        drive_id = drive_resp.json()["id"]
+
+        # 4. Download dos arquivos
+        def _download(path: str) -> bytes:
+            r = requests.get(
+                f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{path}:/content",
+                headers=headers, timeout=30,
+            )
+            r.raise_for_status()
+            return r.content
+
+        return _download(SP_APT_PATH), _download(SP_PERF_PATH)
+
+    except Exception as exc:
+        import traceback
+        st.error(f"❌ Erro SharePoint: {exc}\n\n```\n{traceback.format_exc()}\n```")
+        return None, None
+
+
 # ── CARREGAMENTO ──────────────────────────────────────────────────────────────
+def _read_df(content: bytes, sheet: int = 0) -> pd.DataFrame:
+    """Detecta automaticamente XLSX (magic PK) ou CSV."""
+    if content[:4] == b"PK\x03\x04":
+        return pd.read_excel(io.BytesIO(content), sheet_name=sheet)
+    return pd.read_csv(io.BytesIO(content))
+
 @st.cache_data
 def load_apontamentos(content: bytes) -> pd.DataFrame:
-    df = pd.read_csv(io.BytesIO(content))
+    df = _read_df(content)
     df.columns = ["Apontamento", "DeviceId", "Codigo", "HorasTexto"]
-    df["Horas"] = df["HorasTexto"].apply(parse_horas)
-    df["Codigo"] = df["Codigo"].astype(str).replace("10.004", "10.003")
+    df["Horas"]    = df["HorasTexto"].apply(parse_horas)
+    df["Codigo"]   = df["Codigo"].astype(str).replace("10.004", "10.003")
     df = df.groupby(["Apontamento", "DeviceId", "Codigo"], as_index=False)["Horas"].sum()
     df["Categoria"] = df["Apontamento"].map(CATEGORIA_MAP).fillna("Sem Apontamento")
-    df["Frota"] = df["DeviceId"].map(DEVICE_MAP).fillna(df["DeviceId"])
+    df["Frota"]     = df["DeviceId"].map(DEVICE_MAP).fillna(df["DeviceId"])
     return df
 
 @st.cache_data
 def load_performance(content: bytes) -> pd.DataFrame:
-    df = pd.read_csv(io.BytesIO(content))
-    c = df.columns.tolist()
+    df = _read_df(content)
+    c  = df.columns.tolist()
     def col(name):
         return df[name].apply(parse_num) if name in c else pd.Series(0.0, index=df.index)
     return pd.DataFrame({
@@ -174,23 +289,22 @@ def load_performance(content: bytes) -> pd.DataFrame:
         "RpmMotor":          col("Rpm Médio em Trabalho:"),
         "RpmExtMed":         col("Rpm Médio de Exaustor Primário em Trabalho"),
         "PressaoMed":        col("Pressão Média de Corte Base em Trabalho"),
-        # ── AJUSTE 2: renomeado de Embuchamentos → ReversoIndustrial ─────────
         "ReversoIndustrial": col("Número de Embuchamentos Detectados"),
         "TempoElevador":     df["Tempo de Elevador Ligado"].apply(parse_tempo_perf),
     })
 
 
-# ── HELPER: disponibilidade mecânica ─────────────────────────────────────────
+# ── HELPER ────────────────────────────────────────────────────────────────────
 def calc_disponibilidade(df: pd.DataFrame) -> pd.DataFrame:
     total = df.groupby("Frota")["Horas"].sum().rename("Total")
     quebra = df[df["Apontamento"] == "Quebra"].groupby("Frota")["Horas"].sum().rename("Quebra")
     disp = pd.concat([total, quebra], axis=1).fillna(0)
-    disp["Disponibilidade"] = (disp["Total"] - disp["Quebra"]) / disp["Total"] * 100
+    disp["Disponibilidade"]   = (disp["Total"] - disp["Quebra"]) / disp["Total"] * 100
     disp["Indisponibilidade"] = disp["Quebra"] / disp["Total"] * 100
     return disp.reset_index()
 
 
-# ── LAYOUT PLOTLY — fundo transparente ───────────────────────────────────────
+# ── LAYOUT PLOTLY ─────────────────────────────────────────────────────────────
 FIG_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
@@ -203,15 +317,11 @@ def fig_donut(df: pd.DataFrame) -> go.Figure:
     agg = df.groupby("Categoria")["Horas"].sum().reset_index()
     agg = agg[agg["Horas"] > 0].sort_values("Horas", ascending=False)
     fig = go.Figure(go.Pie(
-        labels=agg["Categoria"],
-        values=agg["Horas"].round(1),
+        labels=agg["Categoria"], values=agg["Horas"].round(1),
         hole=0.60,
-        marker=dict(
-            colors=[CAT_CORES.get(c, "#888") for c in agg["Categoria"]],
-            line=dict(color="rgba(0,0,0,0.3)", width=1),
-        ),
-        textinfo="percent",
-        textfont=dict(color="#ffffff"),
+        marker=dict(colors=[CAT_CORES.get(c, "#888") for c in agg["Categoria"]],
+                    line=dict(color="rgba(0,0,0,0.3)", width=1)),
+        textinfo="percent", textfont=dict(color="#ffffff"),
         hovertemplate="<b>%{label}</b><br>%{value:.1f}h (%{percent})<extra></extra>",
     ))
     fig.update_layout(**FIG_LAYOUT, showlegend=True,
@@ -229,8 +339,7 @@ def fig_barras_h(df: pd.DataFrame) -> go.Figure:
         orientation="h",
         marker_color=[APT_CORES.get(a, "#888") for a in agg["Apontamento"]],
         text=agg["Horas"].round(1).astype(str) + "h",
-        textposition="outside",
-        textfont=dict(color="#e0e0e0"),
+        textposition="outside", textfont=dict(color="#e0e0e0"),
         hovertemplate="<b>%{y}</b><br>%{x:.1f}h<extra></extra>",
     ))
     fig.update_layout(**FIG_LAYOUT,
@@ -243,13 +352,12 @@ def fig_barras_h(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# ── AJUSTE 3: % no topo de cada coluna ───────────────────────────────────────
 def fig_comparativo(df: pd.DataFrame) -> go.Figure:
-    cats  = ["Colhendo", "Aguardando Transbordo", "Chuva / Umidade",
-             "Quebra", "Manobra", "Sem Apontamento"]
+    cats   = ["Colhendo", "Aguardando Transbordo", "Chuva / Umidade",
+              "Quebra", "Manobra", "Sem Apontamento"]
     frotas = sorted(df["Frota"].unique())
     cores  = [C_F1262, C_F1263]
-    fig = go.Figure()
+    fig    = go.Figure()
     for i, frota in enumerate(frotas):
         sub         = df[df["Frota"] == frota]
         total_frota = sub["Horas"].sum()
@@ -258,8 +366,7 @@ def fig_comparativo(df: pd.DataFrame) -> go.Figure:
         fig.add_trace(go.Bar(
             name=frota, x=cats, y=vals,
             marker_color=cores[i % 2],
-            text=texts,
-            textposition="outside",
+            text=texts, textposition="outside",
             textfont=dict(color="#e0e0e0", size=9),
             hovertemplate="<b>%{x}</b><br>%{y:.1f}h · %{text}<extra>" + frota + "</extra>",
         ))
@@ -284,8 +391,7 @@ def fig_perdas(df: pd.DataFrame) -> go.Figure:
         x=agg.values.round(1), y=agg.index, orientation="h",
         marker_color=[APT_CORES.get(a, "#888") for a in agg.index],
         text=[f"{v:.1f}h" for v in agg.values],
-        textposition="outside",
-        textfont=dict(color="#e0e0e0"),
+        textposition="outside", textfont=dict(color="#e0e0e0"),
         hovertemplate="<b>%{y}</b><br>%{x:.1f}h<extra></extra>",
     ))
     fig.update_layout(**FIG_LAYOUT,
@@ -305,8 +411,7 @@ def fig_disponibilidade(disp_df: pd.DataFrame) -> go.Figure:
         y=disp_df["Disponibilidade"].round(1),
         marker_color=C_DISP,
         text=disp_df["Disponibilidade"].round(1).astype(str) + "%",
-        textposition="inside",
-        textfont=dict(color="#ffffff"),
+        textposition="inside", textfont=dict(color="#ffffff"),
         hovertemplate="<b>%{x}</b><br>Disponibilidade: %{y:.1f}%<extra></extra>",
     ))
     fig.add_trace(go.Bar(
@@ -314,8 +419,7 @@ def fig_disponibilidade(disp_df: pd.DataFrame) -> go.Figure:
         y=disp_df["Indisponibilidade"].round(1),
         marker_color=C_MANUTENCAO,
         text=disp_df["Indisponibilidade"].round(1).astype(str) + "%",
-        textposition="inside",
-        textfont=dict(color="#ffffff"),
+        textposition="inside", textfont=dict(color="#ffffff"),
         hovertemplate="<b>%{x}</b><br>Quebra: %{y:.1f}%<extra></extra>",
     ))
     fig.update_layout(**FIG_LAYOUT, barmode="stack", height=260,
@@ -331,19 +435,16 @@ def fig_disponibilidade(disp_df: pd.DataFrame) -> go.Figure:
 
 def fig_temperaturas(row: pd.Series) -> go.Figure:
     labels = ["Motor", "Óleo Hidráulico"]
-    meds   = [row["TempMedMotor"],  row["TempMedOleo"]]
-    mins_  = [row["TempMinMotor"],  row["TempMinOleo"]]
-    maxs_  = [row["TempMaxMotor"],  row["TempMaxOleo"]]
+    meds   = [row["TempMedMotor"], row["TempMedOleo"]]
+    mins_  = [row["TempMinMotor"], row["TempMinOleo"]]
+    maxs_  = [row["TempMaxMotor"], row["TempMaxOleo"]]
     cores  = ["#E24B4A", "#378ADD"]
-    fig = go.Figure()
+    fig    = go.Figure()
     for label, med, mn, mx, cor in zip(labels, meds, mins_, maxs_, cores):
-        texto = f"mín {mn:.0f}° · méd {med:.0f}° · máx {mx:.0f}°"
         fig.add_trace(go.Bar(
-            name=label, x=[label], y=[med],
-            marker_color=cor,
-            text=texto,
-            textposition="inside",
-            textfont=dict(color="#ffffff", size=12),
+            name=label, x=[label], y=[med], marker_color=cor,
+            text=f"mín {mn:.0f}° · méd {med:.0f}° · máx {mx:.0f}°",
+            textposition="inside", textfont=dict(color="#ffffff", size=12),
             error_y=dict(type="data", symmetric=False,
                          array=[mx - med], arrayminus=[med - mn]),
             hovertemplate=f"<b>{label}</b><br>min {mn}°C · méd {med}°C · máx {mx}°C<extra></extra>",
@@ -360,15 +461,13 @@ def fig_temperaturas(row: pd.Series) -> go.Figure:
 def fig_gauge(valor: float, titulo: str, maximo: float = 100,
               cor: str = C_PRODUTIVO, sufixo: str = "%") -> go.Figure:
     fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=round(valor, 1),
+        mode="gauge+number", value=round(valor, 1),
         number=dict(suffix=sufixo, font=dict(size=22, color=cor)),
         gauge=dict(
             axis=dict(range=[0, maximo], tickwidth=1,
                       tickcolor="rgba(255,255,255,0.3)", tickfont=dict(color="#e0e0e0")),
             bar=dict(color=cor, thickness=0.6),
-            bgcolor="rgba(255,255,255,0.05)",
-            borderwidth=0,
+            bgcolor="rgba(255,255,255,0.05)", borderwidth=0,
             steps=[dict(range=[0, maximo], color="rgba(255,255,255,0.05)")],
         ),
         title=dict(text=titulo, font=dict(size=12, color="#aaaaaa")),
@@ -384,22 +483,30 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("### Dados")
-    fonte = st.radio("Fonte", ["Arquivos padrão (data/)", "Upload manual"],
-                     label_visibility="collapsed")
+    fonte = st.radio(
+        "Fonte",
+        ["SharePoint (automático)", "Upload manual"],
+        label_visibility="collapsed",
+    )
 
-    DATA_DIR = pathlib.Path(__file__).parent / "data"
+    apt_bytes  = None
+    perf_bytes = None
 
-    if fonte == "Upload manual":
-        up_apt  = st.file_uploader("CSV Apontamentos", type="csv", key="up_apt")
-        up_perf = st.file_uploader("CSV Performance",  type="csv", key="up_perf")
+    if fonte == "SharePoint (automático)":
+        with st.spinner("Conectando ao SharePoint..."):
+            apt_bytes, perf_bytes = load_from_sharepoint()
+        if apt_bytes and perf_bytes:
+            st.success("✓ SharePoint conectado")
+        else:
+            st.error("Falha ao carregar. Verifique as credenciais.")
+    else:
+        up_apt  = st.file_uploader("XLSX / CSV — Apontamentos", type=["xlsx", "csv"], key="up_apt")
+        up_perf = st.file_uploader("XLSX / CSV — Performance",  type=["xlsx", "csv"], key="up_perf")
         apt_bytes  = up_apt.read()  if up_apt  else None
         perf_bytes = up_perf.read() if up_perf else None
-    else:
-        apt_bytes  = (DATA_DIR / "apontamentos.csv").read_bytes() if (DATA_DIR / "apontamentos.csv").exists() else None
-        perf_bytes = (DATA_DIR / "performance.csv").read_bytes()  if (DATA_DIR / "performance.csv").exists()  else None
 
     if not apt_bytes or not perf_bytes:
-        st.warning("Coloque os CSVs em `data/` ou faça upload.")
+        st.warning("Aguardando os arquivos de dados.")
         st.stop()
 
     df_apt  = load_apontamentos(apt_bytes)
@@ -413,18 +520,22 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### Navegação")
-    pagina = st.radio("Página",
+    pagina = st.radio(
+        "Página",
         ["Visão geral", "Apontamentos", "Telemetria", "Por frota"],
-        label_visibility="collapsed")
+        label_visibility="collapsed",
+    )
 
     st.markdown("---")
-    st.caption("ESA Agritech · TESTON · 2026")
+    if st.button("🚪 Sair", use_container_width=True):
+        st.session_state["autenticado"] = False
+        st.rerun()
+
+    st.caption("MS Colheitas e Serviços · TESTON · 2026")
 
 
 # ── DADOS FILTRADOS ───────────────────────────────────────────────────────────
-df_f = df_apt if frota_sel == "Todas" else df_apt[df_apt["Frota"] == frota_sel]
-
-# ── AJUSTE 4: filtro de frota propagado para performance ─────────────────────
+df_f      = df_apt  if frota_sel == "Todas" else df_apt[df_apt["Frota"] == frota_sel]
 df_perf_f = df_perf if frota_sel == "Todas" else df_perf[df_perf["NomeFrota"] == frota_sel]
 
 total_h = df_f["Horas"].sum()
@@ -436,16 +547,14 @@ chuva_h = df_f[df_f["Apontamento"] == "Chuva / Umidade"]["Horas"].sum()
 agt_h   = df_f[df_f["Apontamento"] == "Aguardando Transbordo"]["Horas"].sum()
 improd  = chuva_h + qbr_h + agt_h
 
-ef_col   = col_h / total_h * 100              if total_h > 0          else 0
-ef_man   = man_h / (col_h + man_h) * 100      if (col_h + man_h) > 0  else 0
-ef_imp   = improd / total_h * 100             if total_h > 0          else 0
-ef_sa    = sa_h / total_h * 100               if total_h > 0          else 0
-disp_m   = (total_h - qbr_h) / total_h * 100 if total_h > 0          else 0
-
-# ── AJUSTE 1: percentuais individuais do improdutivo ─────────────────────────
-ef_chuva = chuva_h / total_h * 100 if total_h > 0 else 0
-ef_qbr   = qbr_h   / total_h * 100 if total_h > 0 else 0
-ef_agt   = agt_h   / total_h * 100 if total_h > 0 else 0
+ef_col   = col_h / total_h * 100              if total_h > 0         else 0
+ef_man   = man_h / (col_h + man_h) * 100      if (col_h + man_h) > 0 else 0
+ef_imp   = improd / total_h * 100             if total_h > 0         else 0
+ef_sa    = sa_h / total_h * 100               if total_h > 0         else 0
+disp_m   = (total_h - qbr_h) / total_h * 100 if total_h > 0         else 0
+ef_chuva = chuva_h / total_h * 100            if total_h > 0         else 0
+ef_qbr   = qbr_h   / total_h * 100            if total_h > 0         else 0
+ef_agt   = agt_h   / total_h * 100            if total_h > 0         else 0
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -455,62 +564,44 @@ if pagina == "Visão geral":
     st.markdown("## Visão geral operacional")
     st.caption(f"{'Todas as frotas' if frota_sel == 'Todas' else frota_sel} · Safra 2026/27")
 
-    # ── Linha 1: KPIs principais ──────────────────────────────────────────────
+    # Linha 1 — KPIs principais
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("🕐 Total horas período",
               f"{total_h:.1f}h",
               f"{'Todas as frotas' if frota_sel == 'Todas' else frota_sel}")
-    c2.metric("✅ Disponibilidade",
-              f"{disp_m:.1f}%",
-              f"{qbr_h:.1f}h em quebra")
-    c3.metric("⚡ Efic. colheita",
-              f"{ef_col:.1f}%",
-              f"{col_h:.1f}h colhendo")
-    c4.metric("↔️ % Manobra",
-              f"{ef_man:.1f}%",
-              f"{man_h:.1f}h de manobra")
-    c5.metric("❓ Sem apontamento",
-              f"{ef_sa:.1f}%",
-              f"{sa_h:.1f}h sem registro")
+    c2.metric("✅ Disponibilidade",   f"{disp_m:.1f}%",  f"{qbr_h:.1f}h em quebra")
+    c3.metric("⚡ Efic. colheita",    f"{ef_col:.1f}%",  f"{col_h:.1f}h colhendo")
+    c4.metric("↔️ % Manobra",         f"{ef_man:.1f}%",  f"{man_h:.1f}h de manobra")
+    c5.metric("❓ Sem apontamento",    f"{ef_sa:.1f}%",   f"{sa_h:.1f}h sem registro")
 
-    # ── AJUSTE 1: linha de breakdown do improdutivo ───────────────────────────
+    # Linha 2 — Breakdown Improdutivo
     st.markdown(
         "<p style='margin:14px 0 6px;font-size:11px;color:#888;"
         "text-transform:uppercase;letter-spacing:.08em'>⚠️ Breakdown Improdutivo</p>",
         unsafe_allow_html=True,
     )
     ci0, ci1, ci2, ci3 = st.columns(4)
-    ci0.metric("⚠️ Improdutivo total",
-               f"{ef_imp:.1f}%",
-               f"{improd:.1f}h acumuladas")
-    ci1.metric("🌧️ Chuva / Umidade",
-               f"{ef_chuva:.1f}%",
-               f"{chuva_h:.1f}h")
-    ci2.metric("🔧 Quebra",
-               f"{ef_qbr:.1f}%",
-               f"{qbr_h:.1f}h")
-    ci3.metric("⏳ Aguardando Transbordo",
-               f"{ef_agt:.1f}%",
-               f"{agt_h:.1f}h")
+    ci0.metric("⚠️ Improdutivo total",      f"{ef_imp:.1f}%",   f"{improd:.1f}h acumuladas")
+    ci1.metric("🌧️ Chuva / Umidade",       f"{ef_chuva:.1f}%", f"{chuva_h:.1f}h")
+    ci2.metric("🔧 Quebra",                 f"{ef_qbr:.1f}%",   f"{qbr_h:.1f}h")
+    ci3.metric("⏳ Aguardando Transbordo",  f"{ef_agt:.1f}%",   f"{agt_h:.1f}h")
 
     st.divider()
 
-    # ── Performance filtrada por frota (AJUSTE 4) ─────────────────────────────
+    # Performance — filtrada por frota
     if not df_perf_f.empty:
         cons_med  = df_perf_f["TaxaMedTrab"].mean()
         vel_med   = df_perf_f["VelocidadeMed"].mean()
         carga_med = df_perf_f["CargaMed"].mean()
-        # AJUSTE 2: ReversoIndustrial (antes Embuchamentos)
         rev_total = int(df_perf_f["ReversoIndustrial"].sum())
         c6, c7, c8, c9 = st.columns(4)
         c6.metric("🛢️ Consumo médio trab.", f"{cons_med:.1f} L/h")
         c7.metric("🚜 Velocidade média",     f"{vel_med:.2f} km/h")
         c8.metric("⚙️ Carga média motor",    f"{carga_med:.1f}%")
-        c9.metric("🔴 Reverso Industrial",   str(rev_total))   # AJUSTE 2
+        c9.metric("🔴 Reverso Industrial",   str(rev_total))
 
     st.divider()
 
-    # Disponibilidade por frota
     st.markdown("**Disponibilidade mecânica por frota**")
     st.plotly_chart(fig_disponibilidade(disp_df),
                     width="stretch", config={"displayModeBar": False})
@@ -523,16 +614,14 @@ if pagina == "Visão geral":
         st.plotly_chart(fig_donut(df_f), width="stretch",
                         config={"displayModeBar": False})
     with col_r:
-        # ── AJUSTE 3: KPI total de horas por frota acima do comparativo ──────
         st.markdown("**Comparativo Frota 1262 vs Frota 1263**")
+        # KPI de totais por frota acima do comparativo
         frotas_totais   = df_apt.groupby("Frota")["Horas"].sum()
         total_geral_apt = df_apt["Horas"].sum()
-        n_frotas        = len(frotas_totais)
-        kpi_cols        = st.columns(n_frotas + 1)
+        kpi_cols = st.columns(len(frotas_totais) + 1)
         kpi_cols[0].metric("⏱️ Total geral", f"{total_geral_apt:.1f}h")
         for j, (fr, hr) in enumerate(frotas_totais.items()):
             kpi_cols[j + 1].metric(f"⏱️ {fr}", f"{hr:.1f}h")
-        # AJUSTE 3: fig_comparativo agora exibe % no topo de cada coluna
         st.plotly_chart(fig_comparativo(df_apt), width="stretch",
                         config={"displayModeBar": False})
 
@@ -570,11 +659,11 @@ elif pagina == "Apontamentos":
         cats = df_f.groupby("Categoria")["Horas"].sum().reset_index()
         cats = cats[cats["Horas"] > 0].sort_values("Horas", ascending=False)
         cats["% do Total"] = (cats["Horas"] / total_h * 100).round(1).astype(str) + "%"
-        cats["Horas"] = cats["Horas"].round(1)
-        max_h = cats["Horas"].max()
+        cats["Horas"]      = cats["Horas"].round(1)
+        max_h_cat          = cats["Horas"].max()
         for _, row in cats.iterrows():
-            cor = CAT_CORES.get(row["Categoria"], "#888")
-            pct_barra = row["Horas"] / max_h * 100
+            cor       = CAT_CORES.get(row["Categoria"], "#888")
+            pct_barra = row["Horas"] / max_h_cat * 100
             st.markdown(
                 f'<div style="margin-bottom:10px">'
                 f'<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
@@ -585,8 +674,7 @@ elif pagina == "Apontamentos":
                 f'<div style="background:rgba(255,255,255,0.08);border-radius:6px;height:18px;overflow:hidden">'
                 f'<div style="width:{pct_barra:.1f}%;height:100%;background:{cor};border-radius:6px;'
                 f'display:flex;align-items:center;padding-left:8px"></div>'
-                f'</div>'
-                f'</div>',
+                f'</div></div>',
                 unsafe_allow_html=True,
             )
 
@@ -598,7 +686,6 @@ elif pagina == "Telemetria":
     st.markdown("## Telemetria — performance")
     st.caption("Motor, consumo, temperatura e velocidade")
 
-    # AJUSTE 4: usa df_perf_f (filtrado por frota)
     if df_perf_f.empty:
         st.warning("Nenhum dado de performance para a frota selecionada.")
         st.stop()
@@ -620,7 +707,6 @@ elif pagina == "Telemetria":
                     f'</div>',
                     unsafe_allow_html=True,
                 )
-
             metricas = [
                 ("Motor ligado",      f"{row['TempoMotorLigado']:.1f} h"),
                 ("Em trabalho",       f"{row['TempoTrabalho']:.1f} h"),
@@ -632,11 +718,9 @@ elif pagina == "Telemetria":
                 ("RPM motor",         f"{int(row['RpmMotor'])} rpm"),
                 ("RPM extrator",      f"{int(row['RpmExtMed'])} rpm"),
                 ("Pressão méd.",      f"{row['PressaoMed']:.0f} psi"),
-                # AJUSTE 2: renomeado
                 ("Reverso Industrial", str(int(row["ReversoIndustrial"]))),
             ]
             for label, val in metricas:
-                # AJUSTE 2: cor vermelha no label correto
                 cor_val = C_MANUTENCAO if label == "Reverso Industrial" else "#e0e0e0"
                 st.markdown(
                     f'<div style="display:flex;justify-content:space-between;padding:6px 10px;'
@@ -659,7 +743,7 @@ elif pagina == "Telemetria":
     st.divider()
     st.markdown("**Gauges operacionais**")
     gcols = st.columns(len(df_perf_f) * 3)
-    idx = 0
+    idx   = 0
     for _, row in df_perf_f.iterrows():
         ef_mot = row["TempoTrabalho"] / row["TempoMotorLigado"] * 100 if row["TempoMotorLigado"] > 0 else 0
         ocioso = row["TempoOcioso"]   / row["TempoMotorLigado"] * 100 if row["TempoMotorLigado"] > 0 else 0
@@ -703,12 +787,11 @@ elif pagina == "Por frota":
                f"{col_f/tot_f*100:.1f}%" if tot_f > 0 else "–",
                f"{col_f:.1f}h colhendo")
     kc3.metric("↔️ % Manobra",
-               f"{man_f/(col_f+man_f)*100:.1f}%" if (col_f+man_f) > 0 else "–",
+               f"{man_f/(col_f+man_f)*100:.1f}%" if (col_f + man_f) > 0 else "–",
                f"{man_f:.1f}h")
 
     if not sub_perf.empty:
         row = sub_perf.iloc[0]
-        # AJUSTE 2: ReversoIndustrial
         kc4.metric("🔴 Reverso Industrial",
                    str(int(row["ReversoIndustrial"])), "detectados")
 
@@ -740,3 +823,13 @@ elif pagina == "Por frota":
         st.markdown("**Temperaturas**")
         st.plotly_chart(fig_temperaturas(sub_perf.iloc[0]),
                         width="stretch", config={"displayModeBar": False})
+PYEOF
+echo "Arquivo escrito"
+Saída
+
+Arquivo escrito
+Concluído
+
+
+
+
