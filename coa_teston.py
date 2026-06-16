@@ -50,7 +50,6 @@ SP_PERIODO_PATH   = _s("SP_PERIODO_PATH",   "/VITOR/AGRITEL/periodo_agritel.jpg"
 AGRITEL_API_KEY   = _s("AGRITEL_API_KEY",   "69d65ab7023281608700eedd")
 AGRITEL_API_URL   = _s("AGRITEL_API_URL",   "https://api.agritel.com.br")
 
-APP_TIPO   = _s("APP_TIPO", "colheita").lower().strip()
 SENHA_HASH = _s("DASHBOARD_SENHA_HASH", hashlib.sha256("teston2026".encode()).hexdigest())
 
 # Fuso horário MS (UTC-4) — dia agrícola 07:00→06:59 local
@@ -60,7 +59,9 @@ TIPO_CFG = {
     "colheita": {"icone": "🌾", "titulo": "COA · TESTON — Colheita", "sub": "Colhedoras & Transbordos"},
     "agro":     {"icone": "🚜", "titulo": "COA · TESTON — Agro",     "sub": "Máquinas Agrícolas"},
 }
-CONF = TIPO_CFG.get(APP_TIPO, TIPO_CFG["colheita"])
+# CONF padrão inicial — sobrescrito no sidebar após o radio selector
+APP_TIPO = st.session_state.get("tipo_operacao_val", "colheita")
+CONF     = TIPO_CFG[APP_TIPO]
 KEYWORDS_COLHEITA = ["colhedora", "transbordo"]
 
 DEVICE_MAP_FALLBACK = {
@@ -113,7 +114,7 @@ APT_CORES = {
 # PAGE CONFIG + CSS
 # ══════════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title=CONF["titulo"], page_icon=CONF["icone"],
+    page_title="COA · TESTON", page_icon="🌿",
     layout="wide", initial_sidebar_state="expanded",
 )
 st.markdown("""
@@ -143,10 +144,10 @@ div[data-testid="metric-container"] {background:rgba(255,255,255,.05);border-rad
 def check_login():
     if st.session_state.get("autenticado"):
         return
-    st.markdown(f"""
+    st.markdown("""
     <div style="max-width:360px;margin:80px auto;text-align:center">
-      <h1 style="color:#a8c832;font-size:2rem">{CONF['icone']} {CONF['titulo']}</h1>
-      <p style="color:#888;margin-bottom:28px">{CONF['sub']} · Safra 2026/27</p>
+      <h1 style="color:#a8c832;font-size:2rem">🌿 COA · TESTON</h1>
+      <p style="color:#888;margin-bottom:28px">Safra 2026/27</p>
     </div>""", unsafe_allow_html=True)
     col = st.columns([1,2,1])[1]
     with col:
@@ -621,7 +622,20 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ── Seletor de período (substitui secrets PERIODO_INICIO/FIM) ─────────────
+    # ── Seletor de tipo de operação (1 app, 2 visões) ─────────────────────────
+    st.markdown("### Operação")
+    tipo_opcao = st.radio(
+        "Tipo",
+        ["🌾  Colheita", "🚜  Agro"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="tipo_operacao",
+    )
+    APP_TIPO = "colheita" if "Colheita" in tipo_opcao else "agro"
+    CONF     = TIPO_CFG[APP_TIPO]
+    st.session_state["tipo_operacao_val"] = APP_TIPO   # persiste para o próximo rerun
+
+    st.markdown("---")
     st.markdown("### Período")
     hoje = datetime.now()
     d_ini_def = hoje.replace(day=1).date()
