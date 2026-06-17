@@ -942,44 +942,6 @@ elif pagina == "Apontamentos":
 
 
 elif pagina == "Telemetria":
-    # ── DEBUG TEMPORÁRIO — remover após confirmar ─────────────────────────
-    with st.expander("🔍 Debug (remover depois)", expanded=True):
-        if not df_perf_raw.empty:
-            # 1. Amostra de machine names
-            st.write("**Amostra Nome da Máquina (raw):**",
-                     df_perf_raw["Nome da Máquina"].dropna().head(5).tolist())
-
-            # 2. Simula filtro de data dentro do filter_perf
-            _mask = ((df_perf_raw["Data"].dt.date >= data_ini) &
-                     (df_perf_raw["Data"].dt.date <= data_fim))
-            _df_data = df_perf_raw[_mask]
-            st.write(f"**Linhas após filtro de data ({data_ini} → {data_fim}):**", len(_df_data))
-            if not _df_data.empty:
-                st.write("**Amostra Máquinas no período:**",
-                         _df_data["Nome da Máquina"].dropna().head(5).tolist())
-
-                # 3. Simula classificação — extrai frota_num e verifica cc_map
-                import re as _re
-                _fn_sample = _df_data["Nome da Máquina"].head(10).apply(
-                    lambda x: _re.search(r"(\d+)", str(x)).group(1) if _re.search(r"(\d+)", str(x)) else "?"
-                )
-                st.write("**frota_num extraído (primeiros 10):**", _fn_sample.tolist())
-
-                _matched = _fn_sample.apply(lambda fn: fn in cc_map)
-                st.write("**Match cc_map:**", _matched.tolist())
-
-                _tipo_sample = _fn_sample.apply(
-                    lambda fn: cc_map[fn][1] if fn in cc_map else "sem_match"
-                )
-                st.write("**Tipos resultantes:**", _tipo_sample.tolist())
-
-            # 4. cc_map colheita
-            _cc_col = {k:v for k,v in cc_map.items() if v[1]=="colheita"}
-            st.write(f"**cc_map total:** {len(cc_map)} | **colheita:** {len(_cc_col)} | **agro:** {len(cc_map)-len(_cc_col)}")
-            st.write("**cc_map colheita (primeiros 5):**", dict(list(_cc_col.items())[:5]))
-        else:
-            st.error("df_perf_raw VAZIO")
-    # ── FIM DEBUG ─────────────────────────────────────────────────────────
     st.markdown(f"## {CONF['icone']} Telemetria — Performance")
     banner()
     if df_perf_f.empty:
