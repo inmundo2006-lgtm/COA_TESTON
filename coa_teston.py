@@ -45,13 +45,13 @@ SP_CLIENT_SECRET  = _s("SP_CLIENT_SECRET")
 SP_SITE_URL       = _s("SP_SITE_URL",       "https://metalcana.sharepoint.com/sites/MSCOLHEITA")
 SP_VEICULOS_PATH  = _s("SP_VEICULOS_PATH",  "/VITOR/AGRITEL/Veículos_Agritel.xlsx")
 SP_FROTAS_CC_PATH = _s("SP_FROTAS_CC_PATH", "/VITOR/AGRITEL/Frotas_CentroDeCusto.xlsx")
+SP_DEVICE_MAP_PATH= _s("SP_DEVICE_MAP_PATH","/VITOR/AGRITEL/device_map.xlsx")
 
-# Banco de dados consolidado (criado na outra conversa, 01/04→hoje, 1 linha/máquina/dia)
-SP_APT_CONSOL     = _s("SP_APT_CONSOL",  "/VITOR/AGRITEL/APONTAMENTOS_CONSOLIDADO.xlsx")
-SP_PERF_CONSOL    = _s("SP_PERF_CONSOL", "/VITOR/AGRITEL/PERFORMANCE_CONSOLIDADO.xlsx")
+# Banco de dados consolidado (1 linha/máquina/dia, atualizado pela rotina diária)
+SP_APT_CONSOL  = _s("SP_APT_CONSOL",  "/VITOR/AGRITEL/APONTAMENTOS_CONSOLIDADO.xlsx")
+SP_PERF_CONSOL = _s("SP_PERF_CONSOL", "/VITOR/AGRITEL/PERFORMANCE_CONSOLIDADO.xlsx")
 
-# API Agritel — usada UMA VEZ por dia apenas para mapear DeviceId → DeviceName
-# (o Veículos_Agritel usa IMEI, não o DeviceId interno do Agritel)
+# API Agritel — usada APENAS no script criar_device_map.py (não no app)
 AGRITEL_API_KEY = _s("AGRITEL_API_KEY", "69d65ab7023281608700eedd")
 AGRITEL_API_URL = _s("AGRITEL_API_URL", "https://api.agritel.com.br")
 
@@ -70,9 +70,125 @@ CONF     = TIPO_CFG[APP_TIPO]
 KEYWORDS_COLHEITA = ["colhedora", "transbordo"]
 
 DEVICE_MAP_FALLBACK = {
-    "671a433018212ed9057ce3ee": "Frota 1262",
-    "671a433018212ed9057ce3f1": "Frota 1263",
+    "671a433018212ed9057ce3ee": "Frota 1262 (862311062441645)",
+    "671a433018212ed9057ce3f1": "Frota 1263 (862311066111871)",
 }
+
+# Mapeamento completo IMEI → (frota_num, frente, tipo)
+# Extraído da página "Grupos de Máquinas" do Agritel (107 máquinas)
+# Atualizar manualmente se mudar a organização de frentes no Agritel.
+AGRITEL_GRUPOS: dict[str, tuple] = {
+    "862311066119924":("662","Máquina sem grupo","colheita"),
+    "862311066159672":("665","Máquina sem grupo","colheita"),
+    "862311062443708":("811","RENUKA - F. LUIS CARLOS","colheita"),
+    "862311062522956":("812","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
+    "862311066871607":("903","Máquina sem grupo","colheita"),
+    "862311067050045":("975","Máquina sem grupo","colheita"),
+    "862311066903343":("997","COLHEITA COGO - F. MARCELO","colheita"),
+    "862311066795269":("1200","RIO AMAMBAI - F. DANILO","colheita"),
+    "862311066977297":("1201","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "862311066887280":("1202","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "862311062453244":("1204","RIO AMAMBAI - F. DANILO","colheita"),
+    "862311066160217":("1206","RAÍZEN - F. ADILIO","colheita"),
+    "862311066848506":("1207","COLHEITA COGO - F. CARLOS","colheita"),
+    "862311066149459":("1212","COLHEITA COGO - F. MARCELO","colheita"),
+    "862311066137355":("1215","COLHEITA COGO - F. CARLOS","colheita"),
+    "862311066888395":("1218","LOBO GUARÁ - F. MACIEL","colheita"),
+    "862311066788314":("1219","Máquina sem grupo","colheita"),
+    "862311062468531":("1221","LOBO GUARÁ - F. MACIEL","colheita"),
+    "862311066815208":("1222","Máquina sem grupo","colheita"),
+    "862311066966324":("1223","LOBO GUARÁ - F. MACIEL","colheita"),
+    "862311066149814":("1251","SOL NASCENTE - F. DIEGO","colheita"),
+    "862311062507015":("1252","SOL NASCENTE - F. DIEGO","colheita"),
+    "862311062441645":("1262","RIO AMAMBAI - F. FIRU","colheita"),
+    "862311066111871":("1263","RIO AMAMBAI - F. FIRU","colheita"),
+    "862311066138734":("1264","RIO AMAMBAI - F. DANILO","colheita"),
+    "862311067385532":("1265","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
+    "862311067635142":("1266","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
+    "862311066886621":("1269","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "862311066833110":("1278","Máquina sem grupo","colheita"),
+    "862311066887660":("1408","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "862311066900265":("1417","AGRO CIANORTE - F. CARMONA","agro"),
+    "862311066950658":("1434","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
+    "862311062453194":("1441","AGRO NAVIRAÍ - F. DIEGO","agro"),
+    "862311066788728":("1446","Máquina sem grupo","colheita"),
+    "862311066977677":("1448","SOL NASCENTE - F. DIEGO","colheita"),
+    "862311066140151":("1455","AGRO SANTA CANDIDA - WILLIAN","agro"),
+    "862311066979004":("1457","SOL NASCENTE - F. DIEGO","colheita"),
+    "862311066860766":("1458","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
+    "862311067034437":("1469","Máquina sem grupo","colheita"),
+    "862311062441579":("1473","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
+    "862311067051613":("1475","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
+    "862311066149897":("1478","AGRO SANTA CANDIDA - WILLIAN","agro"),
+    "862311066857911":("1482","LOBO GUARÁ - F. MACIEL","colheita"),
+    "862311066108943":("1485","Máquina sem grupo","colheita"),
+    "862311066887306":("1487","Máquina sem grupo","colheita"),
+    "862311066159979":("1488","COLHEITA COGO - F. CARLOS","colheita"),
+    "862311062477854":("1491","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "862311066886605":("1492","Máquina sem grupo","colheita"),
+    "862311066966043":("1495","RIO AMAMBAI - F. DANILO","colheita"),
+    "862311066149566":("1499","Máquina sem grupo","colheita"),
+    "862311066953637":("1500","RIO AMAMBAI - F. FIRU","colheita"),
+    "862311067043743":("1501","RIO AMAMBAI - F. FIRU","colheita"),
+    "862311066952738":("1503","RAÍZEN - F. ADILIO","colheita"),
+    "865513072369453":("1506","Máquina sem grupo","colheita"),
+    "862311066847052":("1507","RIO AMAMBAI - F. DANILO","colheita"),
+    "862311066138726":("1518","PREPARO DE SOLO - F. CLAUDIO","agro"),
+    "862311066149145":("1520","PREPARO DE SOLO - F. CLAUDIO","agro"),
+    "862311062471766":("1521","PREPARO DE SOLO - F. CLAUDIO","agro"),
+    "862311061321533":("1522","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
+    "862311067051373":("1523","RIO AMAMBAI - F. DANILO","colheita"),
+    "862311067051787":("1524","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "862311066872159":("1525","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
+    "862311066128644":("1526","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
+    "862311066137587":("1527","RAÍZEN - F. ADILIO","colheita"),
+    "862311062493430":("1529","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
+    "862311062467079":("1530","AGRO NAVIRAÍ - F. DIEGO","agro"),
+    "862311066139401":("1531","Máquina sem grupo","colheita"),
+    "862311062511983":("1532","AGRO NAVIRAÍ - F. DIEGO","agro"),
+    "862311066129022":("1533","AGRO SANTA CANDIDA - WILLIAN","agro"),
+    "862311066159961":("1534","SOL NASCENTE - F. DIEGO","colheita"),
+    "862311067049633":("1536","SOL NASCENTE - F. DIEGO","colheita"),
+    "862311066858554":("1537","SOL NASCENTE - F. DIEGO","colheita"),
+    "862311066887173":("1538","RAÍZEN - F. ADILIO","colheita"),
+    "862311066997477":("1539","COLHEITA COGO - F. CARLOS","colheita"),
+    "862311066877489":("1544","PREPARO DE SOLO - F. CLAUDIO","agro"),
+    "862311062465842":("1545","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "862311066111962":("1546","AGRO CIANORTE - F. CARMONA","agro"),
+    "862311066848423":("1548","RIO AMAMBAI - F. DANILO","colheita"),
+    "862311066108703":("1549","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "862311066950559":("1550","AGRO NAVIRAÍ - F. DIEGO","agro"),
+    "862311066978782":("1553","PREPARO DE SOLO - F. CLAUDIO","agro"),
+    "862311066821164":("1554","PREPARO DE SOLO - F. CLAUDIO","agro"),
+    "862311066160316":("1555","PREPARO DE SOLO - F. CLAUDIO","agro"),
+    "862311066130517":("1556","PREPARO DE SOLO - F. CLAUDIO","agro"),
+    "862311066151463":("1560","PREPARO DE SOLO - F. CLAUDIO","agro"),
+    "862311067447977":("1563","RENUKA - F. LUIS CARLOS","colheita"),
+    "862311062479579":("1564","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
+    "862311066121656":("1565","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
+    "862311066955442":("1572","RENUKA - F. LUIS CARLOS","colheita"),
+    "862311067386555":("1573","RIO AMAMBAI - F. FIRU","colheita"),
+    "862311066139476":("1574","RAÍZEN - F. ADILIO","colheita"),
+    "862311066953843":("1575","COLHEITA COGO - F. MARCELO","colheita"),
+    "862311067040327":("1579","LOBO GUARÁ - F. MACIEL","colheita"),
+    "862311066167667":("2014","Máquina sem grupo","colheita"),
+    "862311067005155":("2017","Máquina sem grupo","colheita"),
+    "862311066903350":("2018","RIO AMAMBAI - F. DANILO","colheita"),
+    "862311062482227":("2020","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "SES2F90":         ("2021","RIO AMAMBAI - F. FIRU","colheita"),
+    "862311066847227":("2022","Máquina sem grupo","colheita"),
+    "862311066844034":("2023","RIO AMAMBAI - F. TUKINHA","colheita"),
+    "862311067049617":("2024","Máquina sem grupo","colheita"),
+    "862311062512718":("2027","COLHEITA COGO - F. CARLOS","colheita"),
+    "862311067386365":("2600","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
+    "862311066950542":("2601","Máquina sem grupo","colheita"),
+    "862311066903301":("2602","RAÍZEN - F. ANDERSON","colheita"),
+    "862311066815919":("2603","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
+    "862311066859289":("2607","LOBO GUARÁ - F. MACIEL","colheita"),
+}
+# Mapa inverso: frota_num → (frente, tipo)  — para uso no filter_perf via nome da máquina
+_FROTA_FRENTE = {v[0]: (v[1], v[2]) for v in AGRITEL_GRUPOS.values()}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CORES
@@ -203,42 +319,11 @@ def _read_df(content):
     return pd.read_csv(io.BytesIO(content))
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MAPEAMENTO DeviceId → DeviceName  (via Agritel API, cache 24h)
-# O Veículos_Agritel usa IMEI (Placa) — diferente do DeviceId interno do Agritel.
-# ══════════════════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=86400)
-def load_device_names_from_api() -> dict:
-    """
-    Retorna {DeviceId: DeviceName} — ex: {"671a43...": "Frota 1262 - Colhedora JD"}
-    Usa os últimos 7 dias; cache de 24h (dispositivos raramente mudam).
-    """
-    import requests as req
-    from datetime import datetime, timezone, timedelta
-    try:
-        end   = datetime.now(timezone.utc)
-        start = end - timedelta(days=7)
-        r = req.get(
-            f"{AGRITEL_API_URL}/telemetry-integration/operational-report",
-            headers={"X-Api-Key": AGRITEL_API_KEY},
-            params={"startTime": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "endTime":   end.strftime("%Y-%m-%dT%H:%M:%SZ")},
-            timeout=30,
-        )
-        if r.status_code == 200:
-            items = r.json().get("items", [])
-            return {i["deviceId"]: i["deviceName"] for i in items if "deviceId" in i}
-        if r.status_code == 429:
-            st.toast("⏳ Agritel rate limit — mapa usa fallback", icon="⚠️")
-    except Exception as e:
-        st.toast(f"⚠️ Agritel API: {e}", icon="⚠️")
-    return {}
-
-# ══════════════════════════════════════════════════════════════════════════════
 # SHAREPOINT — carrega veículos, CC e os dois consolidados
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data(ttl=300)   # 5 min: arquivos mudam 1x/dia pela rotina
 def load_from_sharepoint():
-    result = {k: None for k in ("apt_consol","perf_consol","veiculos","frotas_cc")}
+    result = {k: None for k in ("apt_consol","perf_consol","veiculos","frotas_cc","device_map")}
     try:
         import requests as req
         tok = req.post(
@@ -269,6 +354,7 @@ def load_from_sharepoint():
         result["perf_consol"] = _dl(SP_PERF_CONSOL)
         result["veiculos"]    = _dl(SP_VEICULOS_PATH)
         result["frotas_cc"]   = _dl(SP_FROTAS_CC_PATH)
+        result["device_map"]  = _dl(SP_DEVICE_MAP_PATH)   # gerado por criar_device_map.py
     except Exception as e:
         st.error(f"❌ SharePoint: {e}")
     return result
@@ -375,14 +461,34 @@ def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
         "Odometro":         col("Odômetro de Trabalho"),
     })
 
-    # Frente e TipoMaq via nome_frota → device lookup
-    nome_to_frente  = {v: frente_map.get(k,"Sem frente") for k,v in device_map.items()}
-    nome_to_tipomaq = {v: tipo_maq_map.get(k,"Outro")    for k,v in device_map.items()}
-    nome_to_tipo    = {v: tipo_map.get(k,"agro")          for k,v in device_map.items()}
+    # Frente e TipoMaq via nome_frota/IMEI
+    # Performance "Nome da Máquina" = "Frota 1262 (862311062441645)"
+    # → extrai frota_num e IMEI → AGRITEL_GRUPOS → tipo + frente
+    def _classify_perf_row(nome_maquina):
+        m_frota = re.search(r"[Ff]rota\s*(\d+)", str(nome_maquina))
+        m_imei  = re.search(r"\(([^)]+)\)", str(nome_maquina))
+        frota_n = m_frota.group(1) if m_frota else ""
+        imei    = m_imei.group(1)  if m_imei  else ""
+        # Prioridade: IMEI → frota_num → keyword
+        if imei and imei in AGRITEL_GRUPOS:
+            _, frente, tipo = AGRITEL_GRUPOS[imei]
+        elif frota_n and frota_n in _FROTA_FRENTE:
+            frente, tipo = _FROTA_FRENTE[frota_n]
+        else:
+            txt = _norm(str(nome_maquina))
+            tipo   = "colheita" if any(k in txt for k in KEYWORDS_COLHEITA) else "agro"
+            frente = "Sem frente"
+        tipo_maq = nome_to_tipomaq.get(frota_n, _tipo_maq_from_name(str(nome_maquina)))
+        return tipo, frente, tipo_maq
 
-    tmp["Tipo"]    = tmp["NomeFrota"].map(nome_to_tipo).fillna("agro")
-    tmp["Frente"]  = tmp["NomeFrota"].map(nome_to_frente).fillna("Sem frente")
-    tmp["TipoMaq"] = tmp["NomeFrota"].map(nome_to_tipomaq).fillna("Outro")
+    nome_to_tipomaq_perf: dict[str, str] = {}
+    if veiculos_df is not None and not veiculos_df.empty:
+        pass  # já calculado via build_device_map; aqui só usamos _FROTA_FRENTE
+
+    classif = tmp["NomeCompleto"].apply(_classify_perf_row)
+    tmp["Tipo"]    = classif.apply(lambda x: x[0])
+    tmp["Frente"]  = classif.apply(lambda x: x[1])
+    tmp["TipoMaq"] = classif.apply(lambda x: x[2])
 
     tmp = tmp[tmp["Tipo"] == filtrar_tipo]
     if frentes_sel:
@@ -465,58 +571,68 @@ def load_frotas_cc(content: bytes) -> pd.DataFrame:
     return r.dropna(subset=["Frota"])
 
 
-def build_device_map(veiculos_df, frotas_cc_df=None):
+def build_device_map(veiculos_df, frotas_cc_df=None, device_map_content: bytes | None = None):
     """
     Retorna (device_map, tipo_map, frente_map, tipo_maq_map).
 
-    Fonte dos nomes: Agritel API (DeviceId → "Frota 1262 - Colhedora JD") — cache 24h.
-    Veículos_Agritel usa IMEI (Placa), não DeviceId, portanto é usado só para TipoMaq.
-    Frotas_CentroDeCusto conecta frota_number → (tipo colheita/agro, frente).
+    Fonte principal: device_map.xlsx (DeviceId → "Frota 1262 (IMEI)")
+      → extrai IMEI do DeviceName
+      → consulta AGRITEL_GRUPOS[IMEI] → (frota_num, frente, tipo)
+
+    Veículos_Agritel: frota_name → tipo_maq (Colhedora/Transbordo/Trator)
     """
-    # 1. DeviceId → DeviceName via API (cache 24h)
-    api_names = load_device_names_from_api()
+    # 1. DeviceId → DeviceName (arquivo estático)
+    raw_names: dict[str, str] = {}
+    if device_map_content:
+        try:
+            df_dm = _read_df(device_map_content)
+            id_c  = _find_col(df_dm, ["deviceid","device id","id"])
+            nm_c  = _find_col(df_dm, ["devicename","device name","nome","name"])
+            if id_c and nm_c:
+                raw_names = dict(zip(
+                    df_dm[id_c].astype(str).str.strip(),
+                    df_dm[nm_c].astype(str).str.strip()
+                ))
+        except Exception:
+            pass
 
-    # Fallback mínimo se API falhar
-    if not api_names:
-        api_names = DEVICE_MAP_FALLBACK.copy()
+    if not raw_names:
+        raw_names = DEVICE_MAP_FALLBACK.copy()
+        st.sidebar.info("⚠️ device_map.xlsx ausente — execute `criar_device_map.py`.")
 
-    # 2. Veículos → TipoMaq por frota_name
-    # Nome (frota) → tipo_maq: "Colhedora" | "Transbordo" | "Trator" | "Outro"
-    nome_to_tipomaq: dict[str, str] = {}
+    # 2. Veículos → TipoMaq por frota_number
+    frota_to_tipomaq: dict[str, str] = {}
     if veiculos_df is not None and not veiculos_df.empty:
         tipo_c = _find_col(veiculos_df, ["tipo"])
         nome_c = _find_col(veiculos_df, ["nome"])
         if nome_c and tipo_c:
             for _, row in veiculos_df.iterrows():
-                n   = _norm(str(row[nome_c]))
-                tp  = str(row[tipo_c])
-                maq = ("Colhedora" if "colhedora" in _norm(tp) else
-                       "Transbordo" if ("transbordo" in _norm(tp) or "caminhao" in _norm(tp)) else
-                       "Trator" if ("trator" in _norm(tp) or "pul" in _norm(tp)) else "Outro")
-                # chave = "Frota 1262"
                 m = re.search(r"[Ff]rota\s*(\d+)", str(row[nome_c]))
                 if m:
-                    nome_to_tipomaq[f"Frota {m.group(1)}"] = maq
+                    frota_to_tipomaq[m.group(1)] = _tipo_maq_from_name(str(row[tipo_c]))
 
-    # 3. CC lookup: frota_number → (tipo_col, frente)
-    cc_lkp: dict[str, tuple] = {}
-    if frotas_cc_df is not None and not frotas_cc_df.empty:
-        for _, row in frotas_cc_df.iterrows():
-            fr = str(row["Frota"]).lstrip("0") or "0"
-            cc_lkp[fr] = (row["Tipo"], row["Frente"])
-
-    # 4. Montar os mapas finais
+    # 3. Montar mapas: DeviceId → (nome_curto, tipo, frente, tipo_maq)
     dm, tm, fm, mm = {}, {}, {}, {}
-    for did, dname in api_names.items():
-        m = re.search(r"[Ff]rota\s*(\d+)", str(dname))
-        frota_n    = m.group(1) if m else ""
+    for did, dname in raw_names.items():
+        # Extrair frota_num e IMEI do DeviceName: "Frota 1262 (862311062441645)"
+        m_frota = re.search(r"[Ff]rota\s*(\d+)", str(dname))
+        m_imei  = re.search(r"\(([^)]+)\)", str(dname))
+        frota_n    = m_frota.group(1) if m_frota else ""
+        imei       = m_imei.group(1)  if m_imei  else ""
         nome_curto = f"Frota {frota_n}" if frota_n else str(dname)
 
         dm[did] = nome_curto
-        mm[did] = nome_to_tipomaq.get(nome_curto, _tipo_maq_from_name(dname))
 
-        if frota_n and frota_n in cc_lkp:
-            tm[did], fm[did] = cc_lkp[frota_n]
+        # TipoMaq: Veículos primeiro, fallback do nome
+        mm[did] = frota_to_tipomaq.get(frota_n, _tipo_maq_from_name(dname))
+
+        # Tipo e Frente: AGRITEL_GRUPOS via IMEI (mais completo que Frotas_CC)
+        if imei and imei in AGRITEL_GRUPOS:
+            _, frente, tipo = AGRITEL_GRUPOS[imei]
+            tm[did], fm[did] = tipo, frente
+        elif frota_n and frota_n in _FROTA_FRENTE:
+            frente, tipo = _FROTA_FRENTE[frota_n]
+            tm[did], fm[did] = tipo, frente
         else:
             txt = _norm(str(dname))
             tm[did] = "colheita" if any(k in txt for k in KEYWORDS_COLHEITA) else "agro"
@@ -527,9 +643,9 @@ def build_device_map(veiculos_df, frotas_cc_df=None):
 
 def _tipo_maq_from_name(name: str) -> str:
     n = _norm(str(name))
-    if "colhedora" in n:  return "Colhedora"
-    if "transbordo" in n or "caminhao" in n: return "Transbordo"
-    if "trator" in n: return "Trator"
+    if "colhedora" in n:                          return "Colhedora"
+    if "transbordo" in n or "caminhao" in n:      return "Transbordo"
+    if "trator" in n or "pulveriz" in n:          return "Trator"
     return "Outro"
 
 
@@ -724,7 +840,9 @@ with st.sidebar:
     # ── Cadastro de frotas ────────────────────────────────────────────────────
     veic_df = load_veiculos(sp_data["veiculos"]) if sp_data.get("veiculos") else None
     cc_df   = load_frotas_cc(sp_data["frotas_cc"]) if sp_data.get("frotas_cc") else None
-    device_map, tipo_map, frente_map, tipo_maq_map = build_device_map(veic_df, cc_df)
+    device_map, tipo_map, frente_map, tipo_maq_map = build_device_map(
+        veic_df, cc_df, sp_data.get("device_map")
+    )
 
     st.markdown("---")
 
