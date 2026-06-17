@@ -1,16 +1,14 @@
 """
-COA · TESTON — Dashboard Safra 2026/27  |  v5
+COA · TESTON — Dashboard Safra 2026/27  |  v6
 Streamlit + Plotly | Login + SharePoint
 
-NOVIDADES v5 (vs v4):
-  - _load_apt_raw() corrigido para estrutura real: Data|DeviceName|Name|Soma de Diff
-  - filter_apt() sem device_map → classifica via DeviceName ("Frota 1262") + _FROTA_FRENTE
-  - device_map.xlsx removido — dependência eliminada completamente
-  - filter_perf() signature simplificada (params não usados removidos)
-  - TempoDeslocando adicionado em filter_perf
-  - Bug fix: comparações Frota em disp_df (remoção indevida de "Frota " prefix)
-  - build_veic_tipomaq() substituí build_device_map() — só Veículos necessário
-  - Sidebar: frentes dinâmicas via _FROTA_FRENTE
+NOVIDADES v6 (vs v5):
+  - _load_apt_raw() lê novo formato: Máquina|Data e Horário|Apontamento|Código|Operador|Tempo(min)
+    → pré-agrega para nível diário (211k linhas → ~2k), Tempo ÷ 60 = horas
+  - Frotas_CentroDeCusto.xlsx é a única fonte de frente + tipo (colheita/agro)
+  - AGRITEL_GRUPOS e _FROTA_FRENTE removidos — zero código hardcoded de frotas
+  - filter_apt() e filter_perf() usam cc_map {frota_num: (frente, tipo)}
+  - Sidebar: frentes vindas do cc_map dinamicamente
 
 SECRETS necessários:
   SP_TENANT_ID, SP_CLIENT_ID, SP_CLIENT_SECRET
@@ -55,122 +53,6 @@ TIPO_CFG = {
 APP_TIPO = st.session_state.get("tipo_operacao_val", "colheita")
 CONF     = TIPO_CFG[APP_TIPO]
 
-KEYWORDS_COLHEITA = ["colhedora", "transbordo"]
-
-# Mapeamento completo IMEI → (frota_num, frente, tipo)
-AGRITEL_GRUPOS: dict[str, tuple] = {
-    "862311066119924":("662","Máquina sem grupo","colheita"),
-    "862311066159672":("665","Máquina sem grupo","colheita"),
-    "862311062443708":("811","RENUKA - F. LUIS CARLOS","colheita"),
-    "862311062522956":("812","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
-    "862311066871607":("903","Máquina sem grupo","colheita"),
-    "862311067050045":("975","Máquina sem grupo","colheita"),
-    "862311066903343":("997","COLHEITA COGO - F. MARCELO","colheita"),
-    "862311066795269":("1200","RIO AMAMBAI - F. DANILO","colheita"),
-    "862311066977297":("1201","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "862311066887280":("1202","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "862311062453244":("1204","RIO AMAMBAI - F. DANILO","colheita"),
-    "862311066160217":("1206","RAÍZEN - F. ADILIO","colheita"),
-    "862311066848506":("1207","COLHEITA COGO - F. CARLOS","colheita"),
-    "862311066149459":("1212","COLHEITA COGO - F. MARCELO","colheita"),
-    "862311066137355":("1215","COLHEITA COGO - F. CARLOS","colheita"),
-    "862311066888395":("1218","LOBO GUARÁ - F. MACIEL","colheita"),
-    "862311066788314":("1219","Máquina sem grupo","colheita"),
-    "862311062468531":("1221","LOBO GUARÁ - F. MACIEL","colheita"),
-    "862311066815208":("1222","Máquina sem grupo","colheita"),
-    "862311066966324":("1223","LOBO GUARÁ - F. MACIEL","colheita"),
-    "862311066149814":("1251","SOL NASCENTE - F. DIEGO","colheita"),
-    "862311062507015":("1252","SOL NASCENTE - F. DIEGO","colheita"),
-    "862311062441645":("1262","RIO AMAMBAI - F. FIRU","colheita"),
-    "862311066111871":("1263","RIO AMAMBAI - F. FIRU","colheita"),
-    "862311066138734":("1264","RIO AMAMBAI - F. DANILO","colheita"),
-    "862311067385532":("1265","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
-    "862311067635142":("1266","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
-    "862311066886621":("1269","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "862311066833110":("1278","Máquina sem grupo","colheita"),
-    "862311066887660":("1408","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "862311066900265":("1417","AGRO CIANORTE - F. CARMONA","agro"),
-    "862311066950658":("1434","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
-    "862311062453194":("1441","AGRO NAVIRAÍ - F. DIEGO","agro"),
-    "862311066788728":("1446","Máquina sem grupo","colheita"),
-    "862311066977677":("1448","SOL NASCENTE - F. DIEGO","colheita"),
-    "862311066140151":("1455","AGRO SANTA CANDIDA - WILLIAN","agro"),
-    "862311066979004":("1457","SOL NASCENTE - F. DIEGO","colheita"),
-    "862311066860766":("1458","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
-    "862311067034437":("1469","Máquina sem grupo","colheita"),
-    "862311062441579":("1473","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
-    "862311067051613":("1475","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
-    "862311066149897":("1478","AGRO SANTA CANDIDA - WILLIAN","agro"),
-    "862311066857911":("1482","LOBO GUARÁ - F. MACIEL","colheita"),
-    "862311066108943":("1485","Máquina sem grupo","colheita"),
-    "862311066887306":("1487","Máquina sem grupo","colheita"),
-    "862311066159979":("1488","COLHEITA COGO - F. CARLOS","colheita"),
-    "862311062477854":("1491","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "862311066886605":("1492","Máquina sem grupo","colheita"),
-    "862311066966043":("1495","RIO AMAMBAI - F. DANILO","colheita"),
-    "862311066149566":("1499","Máquina sem grupo","colheita"),
-    "862311066953637":("1500","RIO AMAMBAI - F. FIRU","colheita"),
-    "862311067043743":("1501","RIO AMAMBAI - F. FIRU","colheita"),
-    "862311066952738":("1503","RAÍZEN - F. ADILIO","colheita"),
-    "865513072369453":("1506","Máquina sem grupo","colheita"),
-    "862311066847052":("1507","RIO AMAMBAI - F. DANILO","colheita"),
-    "862311066138726":("1518","PREPARO DE SOLO - F. CLAUDIO","agro"),
-    "862311066149145":("1520","PREPARO DE SOLO - F. CLAUDIO","agro"),
-    "862311062471766":("1521","PREPARO DE SOLO - F. CLAUDIO","agro"),
-    "862311061321533":("1522","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
-    "862311067051373":("1523","RIO AMAMBAI - F. DANILO","colheita"),
-    "862311067051787":("1524","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "862311066872159":("1525","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
-    "862311066128644":("1526","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
-    "862311066137587":("1527","RAÍZEN - F. ADILIO","colheita"),
-    "862311062493430":("1529","AGRO VALE DO IVAÍ - F. BRUNO","agro"),
-    "862311062467079":("1530","AGRO NAVIRAÍ - F. DIEGO","agro"),
-    "862311066139401":("1531","Máquina sem grupo","colheita"),
-    "862311062511983":("1532","AGRO NAVIRAÍ - F. DIEGO","agro"),
-    "862311066129022":("1533","AGRO SANTA CANDIDA - WILLIAN","agro"),
-    "862311066159961":("1534","SOL NASCENTE - F. DIEGO","colheita"),
-    "862311067049633":("1536","SOL NASCENTE - F. DIEGO","colheita"),
-    "862311066858554":("1537","SOL NASCENTE - F. DIEGO","colheita"),
-    "862311066887173":("1538","RAÍZEN - F. ADILIO","colheita"),
-    "862311066997477":("1539","COLHEITA COGO - F. CARLOS","colheita"),
-    "862311066877489":("1544","PREPARO DE SOLO - F. CLAUDIO","agro"),
-    "862311062465842":("1545","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "862311066111962":("1546","AGRO CIANORTE - F. CARMONA","agro"),
-    "862311066848423":("1548","RIO AMAMBAI - F. DANILO","colheita"),
-    "862311066108703":("1549","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "862311066950559":("1550","AGRO NAVIRAÍ - F. DIEGO","agro"),
-    "862311066978782":("1553","PREPARO DE SOLO - F. CLAUDIO","agro"),
-    "862311066821164":("1554","PREPARO DE SOLO - F. CLAUDIO","agro"),
-    "862311066160316":("1555","PREPARO DE SOLO - F. CLAUDIO","agro"),
-    "862311066130517":("1556","PREPARO DE SOLO - F. CLAUDIO","agro"),
-    "862311066151463":("1560","PREPARO DE SOLO - F. CLAUDIO","agro"),
-    "862311067447977":("1563","RENUKA - F. LUIS CARLOS","colheita"),
-    "862311062479579":("1564","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
-    "862311066121656":("1565","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
-    "862311066955442":("1572","RENUKA - F. LUIS CARLOS","colheita"),
-    "862311067386555":("1573","RIO AMAMBAI - F. FIRU","colheita"),
-    "862311066139476":("1574","RAÍZEN - F. ADILIO","colheita"),
-    "862311066953843":("1575","COLHEITA COGO - F. MARCELO","colheita"),
-    "862311067040327":("1579","LOBO GUARÁ - F. MACIEL","colheita"),
-    "862311066167667":("2014","Máquina sem grupo","colheita"),
-    "862311067005155":("2017","Máquina sem grupo","colheita"),
-    "862311066903350":("2018","RIO AMAMBAI - F. DANILO","colheita"),
-    "862311062482227":("2020","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "SES2F90":         ("2021","RIO AMAMBAI - F. FIRU","colheita"),
-    "862311066847227":("2022","Máquina sem grupo","colheita"),
-    "862311066844034":("2023","RIO AMAMBAI - F. TUKINHA","colheita"),
-    "862311067049617":("2024","Máquina sem grupo","colheita"),
-    "862311062512718":("2027","COLHEITA COGO - F. CARLOS","colheita"),
-    "862311067386365":("2600","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
-    "862311066950542":("2601","Máquina sem grupo","colheita"),
-    "862311066903301":("2602","RAÍZEN - F. ANDERSON","colheita"),
-    "862311066815919":("2603","VALE DO IVAÍ COLHEITA - F. NEY","colheita"),
-    "862311066859289":("2607","LOBO GUARÁ - F. MACIEL","colheita"),
-}
-
-# Mapa inverso: frota_num → (frente, tipo)
-_FROTA_FRENTE: dict[str, tuple] = {v[0]: (v[1], v[2]) for v in AGRITEL_GRUPOS.values()}
-
 # ══════════════════════════════════════════════════════════════════════════════
 # CORES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -185,16 +67,16 @@ C_ELEVADOR   = "#9b59b6"
 C_MOTOR      = "#2980b9"
 
 CATEGORIA_MAP = {
-    "Colhendo": "Produtivo", "Manobra": "Manobra", "Deslocando": "Manobra",
+    "Colhendo": "Produtivo", "Trabalhando": "Produtivo",
+    "Manobra": "Manobra", "Deslocando": "Manobra",
     "Quebra": "Manutenção", "Manutenção Programada": "Manutenção",
     "Troca Faquinha": "Manutenção", "PARADA OPERACIONAL": "Manutenção",
     "Chuva / Umidade": "Espera/Imprevisto", "Usina Parada": "Espera/Imprevisto",
     "Falta de Area Liberada": "Espera/Imprevisto", "Falta de Caminhão": "Espera/Imprevisto",
-    "Aguardando Transbordo": "Espera/Imprevisto",
+    "Aguardando Transbordo": "Espera/Imprevisto", "Aguardando Colhedora": "Espera/Imprevisto",
     "Abastecimento": "Parada Operacional", "Refeição": "Parada Operacional",
     "Checklist": "Parada Operacional", "Final Jornada de Trabalho": "Parada Operacional",
-    "Início Jornada de Trabalho": "Parada Operacional", "Trabalhando": "Produtivo",
-    "Parado": "Parada Operacional",
+    "Início Jornada de Trabalho": "Parada Operacional", "Parado": "Parada Operacional",
 }
 CAT_CORES = {
     "Produtivo": C_PRODUTIVO, "Manutenção": C_MANUTENCAO,
@@ -202,7 +84,8 @@ CAT_CORES = {
     "Parada Operacional": C_PARADA, "Sem Apontamento": C_SEM_APT,
 }
 APT_CORES = {
-    "Colhendo": C_PRODUTIVO, "Aguardando Transbordo": C_ESPERA,
+    "Colhendo": C_PRODUTIVO, "Trabalhando": C_PRODUTIVO,
+    "Aguardando Transbordo": C_ESPERA, "Aguardando Colhedora": C_ESPERA,
     "Chuva / Umidade": "#1a5fa8", "Quebra": C_MANUTENCAO,
     "Manobra": C_MANOBRA, "Sem Apontamento": C_SEM_APT,
     "Manutenção Programada": "#2ea05f", "Abastecimento": "#5DCAA5",
@@ -211,7 +94,7 @@ APT_CORES = {
     "Final Jornada de Trabalho": "#9b9b9b", "Início Jornada de Trabalho": "#9b9b9b",
     "Falta de Area Liberada": C_MANUTENCAO, "Falta de Caminhão": C_MANUTENCAO,
     "PARADA OPERACIONAL": C_MANUTENCAO, "Usina Parada": "#9b9b9b",
-    "Trabalhando": C_PRODUTIVO, "Parado": C_PARADA,
+    "Parado": C_PARADA,
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -267,19 +150,12 @@ def check_login():
 check_login()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PARSERS
+# PARSERS / HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-def parse_horas(v):
-    """Parse '24.00 h' → 24.0  ou  24.0 → 24.0"""
-    if isinstance(v, (int, float)):
-        return float(v) if not (isinstance(v, float) and np.isnan(v)) else 0.0
-    m = re.search(r"([\d.,]+)\s*h", str(v))
-    return float(m.group(1).replace(".","").replace(",",".")) if m else 0.0
-
 def parse_num(v):
     if isinstance(v, (int, float)):
         return float(v) if not (isinstance(v, float) and np.isnan(v)) else 0.0
-    c = re.sub(r"[^\d,.]", "", str(v)).replace(".","").replace(",",".")
+    c = re.sub(r"[^\d,.]", "", str(v)).replace(".", "").replace(",", ".")
     try:  return float(c)
     except: return 0.0
 
@@ -297,7 +173,7 @@ def _find_col(df, kws):
             if kw in n: return c
     return None
 
-def _read_df(content):
+def _read_df(content: bytes) -> pd.DataFrame:
     if content[:4] == b"PK\x03\x04":
         return pd.read_excel(io.BytesIO(content), sheet_name=0)
     return pd.read_csv(io.BytesIO(content))
@@ -308,6 +184,13 @@ def _tipo_maq_from_name(name: str) -> str:
     if "transbordo" in n or "caminhao" in n:  return "Transbordo"
     if "trator" in n or "pulveriz" in n:      return "Trator"
     return "Outro"
+
+def _frota_num(frota_str: str) -> str:
+    """'Frota 1262' → '1262'"""
+    m = re.search(r"(\d+)", str(frota_str))
+    return m.group(1) if m else ""
+
+safe = lambda n, d: n / d * 100 if d > 0 else 0.0
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SHAREPOINT
@@ -320,9 +203,10 @@ def load_from_sharepoint():
         tok = req.post(
             f"https://login.microsoftonline.com/{SP_TENANT_ID}/oauth2/v2.0/token",
             data={"grant_type":"client_credentials","client_id":SP_CLIENT_ID,
-                  "client_secret":SP_CLIENT_SECRET,"scope":"https://graph.microsoft.com/.default"},
+                  "client_secret":SP_CLIENT_SECRET,
+                  "scope":"https://graph.microsoft.com/.default"},
             timeout=15).json()
-        h = {"Authorization": f"Bearer {tok['access_token']}"}
+        h  = {"Authorization": f"Bearer {tok['access_token']}"}
         host  = SP_SITE_URL.replace("https://","").split("/")[0]
         spath = "/".join(SP_SITE_URL.replace("https://","").split("/")[1:])
         sid   = req.get(f"https://graph.microsoft.com/v1.0/sites/{host}:/{spath}",
@@ -351,86 +235,45 @@ def load_from_sharepoint():
     return result
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CARREGAMENTO DOS CONSOLIDADOS
+# CARREGAMENTO DOS ARQUIVOS BASE
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
-def _load_apt_raw(content: bytes) -> pd.DataFrame:
+def load_frotas_cc(content: bytes) -> dict:
     """
-    Lê APONTAMENTOS_CONSOLIDADO.xlsx.
-
-    Estrutura real dos arquivos histórico (gerados pelo consolidar_apontamentos.py):
-        Data        | DeviceName       | Name              | Soma de Diff
-        2026-04-01  | Frota 1201       | Colhendo          | 24.00 h
-        2026-04-01  | Frota 1262       | Sem Apontamento   | 1.50 h
-
-    Retorna: Data | Frota | Apontamento | Horas
+    Lê Frotas_CentroDeCusto.xlsx.
+    Retorna {frota_num: (frente, tipo)}
+    ex: {'1262': ('RIO AMAMBAI - F. FIRU', 'colheita'), '1417': ('AGRO CIANORTE - F. CARMONA', 'agro')}
     """
     df = _read_df(content)
+    frota_c = _find_col(df, ["frota"])
+    cc_c    = _find_col(df, ["centro de custo","centro","cc"])
+    if not frota_c: frota_c = df.columns[0]
+    if not cc_c:    cc_c    = df.columns[1] if len(df.columns) > 1 else df.columns[0]
 
-    # Detecção por chave exata (lowercase) — evita ambiguidade de "name" dentro de "devicename"
-    cols_lc = {c.strip().lower(): c for c in df.columns}
-
-    date_c = next((cols_lc[k] for k in ["data", "date"]            if k in cols_lc), None)
-    dev_c  = next((cols_lc[k] for k in ["devicename", "device name",
-                                          "nome da maquina", "frota"] if k in cols_lc), None)
-    apt_c  = next((cols_lc[k] for k in ["name", "apontamento"]      if k in cols_lc
-                   and k != cols_lc.get("devicename","").lower()), None)
-    hrs_c  = next((cols_lc[k] for k in ["soma de diff", "soma", "horas", "diff"]
-                                                                      if k in cols_lc), None)
-
-    # Fallback posicional (4 colunas: Data|DeviceName|Name|Soma de Diff)
-    ncols = len(df.columns)
-    if date_c is None: date_c = df.columns[0]
-    if dev_c  is None: dev_c  = df.columns[1] if ncols > 1 else df.columns[0]
-    if apt_c  is None: apt_c  = df.columns[2] if ncols > 2 else df.columns[1]
-    if hrs_c  is None: hrs_c  = df.columns[3] if ncols > 3 else df.columns[2]
-
-    r = pd.DataFrame({
-        "Data":       df[date_c],
-        "Frota":      df[dev_c].astype(str).str.strip(),      # "Frota 1201"
-        "Apontamento": df[apt_c].astype(str).str.strip(),
-        "Horas":      df[hrs_c].apply(parse_horas),           # "24.00 h" → 24.0
-    })
-    r["Data"] = pd.to_datetime(r["Data"], dayfirst=True, errors="coerce")
-    r = r.dropna(subset=["Data"])
-    r = r[r["Frota"].str.strip() != ""]
-    return r
+    result: dict[str, tuple] = {}
+    for _, row in df.iterrows():
+        frota_n = str(row[frota_c]).strip().lstrip("0") or "0"
+        cc      = str(row[cc_c]).strip()
+        cu      = cc.upper()
+        tipo    = "agro" if (cu.startswith("AGRO") or cu.startswith("PREPARO")) else "colheita"
+        result[frota_n] = (cc, tipo)
+    return result
 
 
-@st.cache_data
-def _load_perf_raw(content: bytes) -> pd.DataFrame:
-    """Lê PERFORMANCE_CONSOLIDADO.xlsx. Primeira coluna deve ser Data."""
-    df = _read_df(content)
-    date_col = _find_col(df, ["data","date"])
-    if date_col and df.columns[0] != date_col:
-        cols = [date_col] + [c for c in df.columns if c != date_col]
-        df = df[cols]
-    df = df.rename(columns={df.columns[0]: "Data"})
-    df["Data"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
-    return df.dropna(subset=["Data"])
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# VEÍCULOS — TipoMaq
-# ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
 def load_veiculos(content: bytes) -> pd.DataFrame:
     df = _read_df(content)
     nome_c = _find_col(df, ["nome","name","maquina"])
     tipo_c = _find_col(df, ["tipo","type","grupo"])
     if not nome_c: nome_c = df.columns[0]
-    r = pd.DataFrame({
+    return pd.DataFrame({
         "Nome":  df[nome_c].astype(str).str.strip(),
         "Grupo": df[tipo_c].astype(str).str.strip() if tipo_c else "",
     })
-    return r
 
 
 def build_veic_tipomaq(veiculos_df) -> dict:
-    """
-    Retorna {frota_num: tipo_maq} ex: {'1262': 'Colhedora', '1417': 'Trator'}.
-    Fonte: Veículos_Agritel.xlsx (coluna Nome com 'Frota XXXX', Grupo/Tipo com tipo de máquina).
-    """
+    """Retorna {frota_num: tipo_maq} ex: {'1262': 'Colhedora'}"""
     result: dict[str, str] = {}
     if veiculos_df is None or veiculos_df.empty:
         return result
@@ -441,21 +284,70 @@ def build_veic_tipomaq(veiculos_df) -> dict:
             result[m.group(1)] = _tipo_maq_from_name(fonte)
     return result
 
+# ══════════════════════════════════════════════════════════════════════════════
+# APONTAMENTOS — novo formato
+# ══════════════════════════════════════════════════════════════════════════════
+@st.cache_data
+def _load_apt_raw(content: bytes) -> pd.DataFrame:
+    """
+    Lê APONTAMENTOS_CONSOLIDADO.xlsx no formato:
+        Máquina | Data e Horário | Apontamento | Código | Operador | Tempo(min)
+
+    Pré-agrega para nível diário:
+        Data | Frota | Apontamento | Horas
+    (~211k linhas → ~2k linhas em cache)
+    """
+    df = _read_df(content)
+    cols_lc = {c.strip().lower(): c for c in df.columns}
+
+    maq_c  = next((cols_lc[k] for k in ["máquina","maquina"]              if k in cols_lc), None)
+    data_c = next((cols_lc[k] for k in ["data e horário","data e horario",
+                                          "data e hora","data"]            if k in cols_lc), None)
+    apt_c  = next((cols_lc[k] for k in ["apontamento"]                    if k in cols_lc), None)
+    tmp_c  = next((cols_lc[k] for k in ["tempo"]                          if k in cols_lc), None)
+
+    if not all([maq_c, data_c, apt_c, tmp_c]):
+        st.error(f"Colunas não encontradas no APONTAMENTOS_CONSOLIDADO. "
+                 f"Encontrado: {list(df.columns)}")
+        return pd.DataFrame()
+
+    # Data e Horário já vem como datetime (openpyxl converte automático)
+    df[data_c] = pd.to_datetime(df[data_c], errors="coerce")
+
+    r = pd.DataFrame({
+        "Data":        df[data_c].dt.normalize(),              # apenas a data
+        "Frota":       df[maq_c].astype(str).str.strip(),     # "Frota 1200"
+        "Apontamento": df[apt_c].astype(str).str.strip(),
+        "Horas":       pd.to_numeric(df[tmp_c], errors="coerce").fillna(0) / 60.0,
+    })
+
+    # Agrega por dia (reduz 211k → ~2k)
+    r = (r.groupby(["Data","Frota","Apontamento"], as_index=False)["Horas"].sum())
+    return r.dropna(subset=["Data"])
+
+
+@st.cache_data
+def _load_perf_raw(content: bytes) -> pd.DataFrame:
+    df = _read_df(content)
+    date_col = _find_col(df, ["data","date"])
+    if date_col and df.columns[0] != date_col:
+        cols = [date_col] + [c for c in df.columns if c != date_col]
+        df = df[cols]
+    df = df.rename(columns={df.columns[0]: "Data"})
+    df["Data"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
+    return df.dropna(subset=["Data"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FILTROS
 # ══════════════════════════════════════════════════════════════════════════════
 def filter_apt(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
-               veic_tipomaq: dict,
+               cc_map: dict, veic_tipomaq: dict,
                filtrar_tipo: str,
                frentes_sel: list | None = None,
                tipos_maq_sel: list | None = None) -> pd.DataFrame:
     """
-    Filtra APONTAMENTOS_CONSOLIDADO pelo período e classifica por tipo/frente/tipo_maq.
-
-    df_raw colunas: Data | Frota ("Frota 1201") | Apontamento | Horas
-    Classificação: frota_num → _FROTA_FRENTE → (frente, tipo)
-                   frota_num → veic_tipomaq   → tipo_maq
+    Filtra e classifica apontamentos.
+    cc_map = {frota_num: (frente, tipo)}  ← Frotas_CentroDeCusto
     """
     mask = (df_raw["Data"].dt.date >= data_ini) & (df_raw["Data"].dt.date <= data_fim)
     df = df_raw[mask].copy()
@@ -467,39 +359,34 @@ def filter_apt(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
     df["Categoria"] = df["Apontamento"].map(CATEGORIA_MAP).fillna("Sem Apontamento")
 
     def _classify(frota_str: str):
-        m = re.search(r"(\d+)", str(frota_str))
-        frota_n = m.group(1) if m else ""
-        if frota_n in _FROTA_FRENTE:
-            frente, tipo = _FROTA_FRENTE[frota_n]
+        fn = _frota_num(frota_str)
+        if fn in cc_map:
+            frente, tipo = cc_map[fn]
         else:
-            frente, tipo = "Sem frente", "colheita"   # fallback: colheita
-        tipo_maq = veic_tipomaq.get(
-            frota_n,
-            "Colhedora" if tipo == "colheita" else "Trator"
-        )
-        return frota_n, tipo, frente, tipo_maq
+            frente, tipo = "Sem frente", "colheita"
+        tipo_maq = veic_tipomaq.get(fn, "Colhedora" if tipo == "colheita" else "Trator")
+        return fn, tipo, frente, tipo_maq
 
-    classif        = df["Frota"].apply(_classify)
-    df["FrotaNum"] = classif.apply(lambda x: x[0])
-    df["Tipo"]     = classif.apply(lambda x: x[1])
-    df["Frente"]   = classif.apply(lambda x: x[2])
-    df["TipoMaq"]  = classif.apply(lambda x: x[3])
+    cl             = df["Frota"].apply(_classify)
+    df["FrotaNum"] = cl.apply(lambda x: x[0])
+    df["Tipo"]     = cl.apply(lambda x: x[1])
+    df["Frente"]   = cl.apply(lambda x: x[2])
+    df["TipoMaq"]  = cl.apply(lambda x: x[3])
 
     df = df[df["Tipo"] == filtrar_tipo]
-    if frentes_sel:
-        df = df[df["Frente"].isin(frentes_sel)]
-    if tipos_maq_sel:
-        df = df[df["TipoMaq"].isin(tipos_maq_sel)]
+    if frentes_sel:     df = df[df["Frente"].isin(frentes_sel)]
+    if tipos_maq_sel:   df = df[df["TipoMaq"].isin(tipos_maq_sel)]
     return df
 
 
 def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
+                cc_map: dict,
                 filtrar_tipo: str,
                 frentes_sel: list | None = None,
                 tipos_maq_sel: list | None = None) -> pd.DataFrame:
     """
-    Agrega PERFORMANCE_CONSOLIDADO pelo período e classifica por tipo/frente.
-    Classifica via IMEI e/ou frota_num extraídos de 'Nome da Máquina'.
+    Agrega performance por frota.
+    Classificação via frota_num → cc_map (sem AGRITEL_GRUPOS).
     """
     mask = (df_raw["Data"].dt.date >= data_ini) & (df_raw["Data"].dt.date <= data_fim)
     df = df_raw[mask].copy()
@@ -512,68 +399,58 @@ def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
     def _tempo(name):
         if name not in df.columns:
             return pd.Series(0.0, index=df.index)
-        return df[name].apply(lambda v: parse_num(v) if isinstance(v, str) else (float(v) if pd.notna(v) else 0.0))
+        return df[name].apply(lambda v: parse_num(v) if isinstance(v, str)
+                              else (float(v) if pd.notna(v) else 0.0))
 
-    # Detecta coluna de deslocamento (nome pode variar entre versões Agritel)
-    desl_col = _find_col(df, ["deslocamento", "deslocando"])
+    desl_col = _find_col(df, ["deslocamento","deslocando"])
 
     tmp = pd.DataFrame({
-        "NomeFrota":        df["Nome da Máquina"].str.extract(r"(Frota \d+)")[0].fillna(df["Nome da Máquina"]),
-        "DeviceId":         df["Nome da Máquina"].astype(str),
-        "TempoMotorLigado": _tempo("Tempo Motor Ligado:"),
-        "TempoTrabalho":    _tempo("Tempo em Trabalho"),
-        "TempoManobra":     _tempo("Tempo em Manobra:"),
-        "TempoOcioso":      _tempo("Tempo com Motor Ocioso:"),
-        "TempoElevador":    _tempo("Tempo de Elevador Ligado"),
-        "TempoDeslocando":  _tempo(desl_col) if desl_col else pd.Series(0.0, index=df.index),
-        "ConsumoTotal":     col("Consumo Total:"),
-        "ConsumoTrabalho":  col("Consumo em Trabalho:"),
-        "TaxaMedTrab":      col("Taxa Média de Consumo de Combustível em Trabalho"),
-        "TaxaMedConsumo":   col("Taxa Média de Consumo de Combustível"),
-        "TempMaxMotor":     col("Temperatura Máxima do Motor"),
-        "TempMedMotor":     col("Temperatura Média do Motor"),
-        "TempMinMotor":     col("Temperatura Mínima do Motor"),
-        "TempMaxOleo":      col("Temperatura Máxima do Óleo Hidráulico"),
-        "TempMedOleo":      col("Temperatura Média do Óleo Hidráulico"),
-        "TempMinOleo":      col("Temperatura Mínima do Óleo Hidráulico"),
-        "CargaMed":         col("Carga Média do Motor"),
-        "CargaMax":         col("Carga Máxima do Motor"),
-        "VelocidadeMed":    col("Velocidade Média de Trabalho:"),
-        "VelocidadeMax":    col("Velocidade Máxima de Trabalho"),
-        "RpmMotor":         col("Rpm Médio em Trabalho:"),
-        "RpmExtMed":        col("Rpm Médio de Exaustor Primário em Trabalho"),
-        "PressaoMed":       col("Pressão Média de Corte Base em Trabalho"),
+        "NomeFrota":         df["Nome da Máquina"].str.extract(r"(Frota \d+)")[0].fillna(df["Nome da Máquina"]),
+        "DeviceId":          df["Nome da Máquina"].astype(str),
+        "TempoMotorLigado":  _tempo("Tempo Motor Ligado:"),
+        "TempoTrabalho":     _tempo("Tempo em Trabalho"),
+        "TempoManobra":      _tempo("Tempo em Manobra:"),
+        "TempoOcioso":       _tempo("Tempo com Motor Ocioso:"),
+        "TempoElevador":     _tempo("Tempo de Elevador Ligado"),
+        "TempoDeslocando":   _tempo(desl_col) if desl_col else pd.Series(0.0, index=df.index),
+        "ConsumoTotal":      col("Consumo Total:"),
+        "ConsumoTrabalho":   col("Consumo em Trabalho:"),
+        "TaxaMedTrab":       col("Taxa Média de Consumo de Combustível em Trabalho"),
+        "TaxaMedConsumo":    col("Taxa Média de Consumo de Combustível"),
+        "TempMaxMotor":      col("Temperatura Máxima do Motor"),
+        "TempMedMotor":      col("Temperatura Média do Motor"),
+        "TempMinMotor":      col("Temperatura Mínima do Motor"),
+        "TempMaxOleo":       col("Temperatura Máxima do Óleo Hidráulico"),
+        "TempMedOleo":       col("Temperatura Média do Óleo Hidráulico"),
+        "TempMinOleo":       col("Temperatura Mínima do Óleo Hidráulico"),
+        "CargaMed":          col("Carga Média do Motor"),
+        "CargaMax":          col("Carga Máxima do Motor"),
+        "VelocidadeMed":     col("Velocidade Média de Trabalho:"),
+        "VelocidadeMax":     col("Velocidade Máxima de Trabalho"),
+        "RpmMotor":          col("Rpm Médio em Trabalho:"),
+        "RpmExtMed":         col("Rpm Médio de Exaustor Primário em Trabalho"),
+        "PressaoMed":        col("Pressão Média de Corte Base em Trabalho"),
         "ReversoIndustrial": col("Número de Embuchamentos Detectados"),
-        "Odometro":         col("Odômetro de Trabalho"),
+        "Odometro":          col("Odômetro de Trabalho"),
     })
 
-    # Classificação — mesmo padrão usado em apontamentos
+    # Classificação via cc_map (frota_num → frente/tipo)
     def _classify_perf(nome_maquina):
-        m_frota = re.search(r"[Ff]rota\s*(\d+)", str(nome_maquina))
-        m_imei  = re.search(r"\(([^)]+)\)",       str(nome_maquina))
-        frota_n = m_frota.group(1) if m_frota else ""
-        imei    = m_imei.group(1)  if m_imei  else ""
-        if imei and imei in AGRITEL_GRUPOS:
-            _, frente, tipo = AGRITEL_GRUPOS[imei]
-        elif frota_n and frota_n in _FROTA_FRENTE:
-            frente, tipo = _FROTA_FRENTE[frota_n]
+        fn = _frota_num(str(nome_maquina))
+        if fn in cc_map:
+            frente, tipo = cc_map[fn]
         else:
-            txt  = _norm(str(nome_maquina))
-            tipo   = "colheita" if any(k in txt for k in KEYWORDS_COLHEITA) else "agro"
-            frente = "Sem frente"
-        tipo_maq = _tipo_maq_from_name(str(nome_maquina))
-        return tipo, frente, tipo_maq
+            frente, tipo = "Sem frente", "colheita"
+        return tipo, frente, _tipo_maq_from_name(str(nome_maquina))
 
-    classif        = tmp["DeviceId"].apply(_classify_perf)
-    tmp["Tipo"]    = classif.apply(lambda x: x[0])
-    tmp["Frente"]  = classif.apply(lambda x: x[1])
-    tmp["TipoMaq"] = classif.apply(lambda x: x[2])
+    cl             = tmp["DeviceId"].apply(_classify_perf)
+    tmp["Tipo"]    = cl.apply(lambda x: x[0])
+    tmp["Frente"]  = cl.apply(lambda x: x[1])
+    tmp["TipoMaq"] = cl.apply(lambda x: x[2])
 
     tmp = tmp[tmp["Tipo"] == filtrar_tipo]
-    if frentes_sel:
-        tmp = tmp[tmp["Frente"].isin(frentes_sel)]
-    if tipos_maq_sel:
-        tmp = tmp[tmp["TipoMaq"].isin(tipos_maq_sel)]
+    if frentes_sel:   tmp = tmp[tmp["Frente"].isin(frentes_sel)]
+    if tipos_maq_sel: tmp = tmp[tmp["TipoMaq"].isin(tipos_maq_sel)]
     if tmp.empty:
         return pd.DataFrame()
 
@@ -591,17 +468,14 @@ def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
         **{c: (c,"mean") for c in agg_mean if c in tmp.columns},
     ).reset_index()
 
-    # Garante que colunas de temperatura existam mesmo sem dados
     for col_name in ["TempMedMotor","TempMaxMotor","TempMinMotor",
-                     "TempMedOleo","TempMaxOleo","TempMinOleo",
-                     "TempoDeslocando"]:
+                     "TempMedOleo","TempMaxOleo","TempMinOleo","TempoDeslocando"]:
         if col_name not in result.columns:
             result[col_name] = 0.0
 
     result["Frota"]        = result["NomeFrota"].str.extract(r"Frota (\d+)")[0].fillna("")
     result["NomeCompleto"] = result["NomeFrota"]
     return result
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
@@ -617,10 +491,8 @@ def calc_disponibilidade(df: pd.DataFrame) -> pd.DataFrame:
 FIG_L = dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
              font=dict(family="Inter,sans-serif", size=12, color="#e0e0e0"))
 
-safe = lambda n, d: n / d * 100 if d > 0 else 0.0
-
 # ══════════════════════════════════════════════════════════════════════════════
-# GRÁFICOS
+# GRÁFICOS (inalterados desde v5)
 # ══════════════════════════════════════════════════════════════════════════════
 def fig_donut(df):
     agg = df.groupby("Categoria")["Horas"].sum().reset_index()
@@ -644,20 +516,21 @@ def fig_barras_h(df):
     fig = go.Figure(go.Bar(
         x=agg["Horas"].round(1), y=agg["Apontamento"], orientation="h",
         marker_color=[APT_CORES.get(a,"#888") for a in agg["Apontamento"]],
-        text=agg["Horas"].round(1).astype(str) + "h",
+        text=agg["Horas"].round(1).astype(str)+"h",
         textposition="outside", textfont=dict(color="#e0e0e0"),
         hovertemplate="<b>%{y}</b><br>%{x:.1f}h<extra></extra>",
     ))
     fig.update_layout(**FIG_L, height=max(300, len(agg)*30+60),
-        margin=dict(l=ml+20, r=60, t=10, b=10),
+        margin=dict(l=ml+20,r=60,t=10,b=10),
         xaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,0.1)",title="horas",color="#e0e0e0"),
-        yaxis=dict(showgrid=False, color="#e0e0e0"))
+        yaxis=dict(showgrid=False,color="#e0e0e0"))
     return fig
 
 def fig_comparativo(df):
-    cats   = ["Colhendo","Aguardando Transbordo","Chuva / Umidade","Quebra","Manobra","Sem Apontamento"]
+    cats   = ["Colhendo","Trabalhando","Aguardando Transbordo","Chuva / Umidade",
+              "Quebra","Manobra","Sem Apontamento"]
     frotas = sorted(df["Frota"].unique())
-    pal    = ["#1a7a4a","#1a5fa8","#c97d10","#7F77DD","#9b59b6","#e67e22"]
+    pal    = ["#1a7a4a","#2ecc71","#1a5fa8","#c97d10","#7F77DD","#9b59b6","#e67e22"]
     fig    = go.Figure()
     for i, fr in enumerate(frotas):
         sub = df[df["Frota"]==fr]; tot = sub["Horas"].sum()
@@ -667,15 +540,15 @@ def fig_comparativo(df):
             text=texts, textposition="outside", textfont=dict(color="#e0e0e0", size=9),
             hovertemplate="<b>%{x}</b><br>%{y:.1f}h · %{text}<extra>"+fr+"</extra>"))
     fig.update_layout(**FIG_L, barmode="group", height=350,
-        xaxis=dict(tickangle=-20, showgrid=False, color="#e0e0e0"),
+        xaxis=dict(tickangle=-20,showgrid=False,color="#e0e0e0"),
         margin=dict(l=4,r=4,t=36,b=4),
         yaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,0.1)",title="horas",color="#e0e0e0"),
-        legend=dict(orientation="h", y=1.12, font=dict(color="#e0e0e0")))
+        legend=dict(orientation="h",y=1.12,font=dict(color="#e0e0e0")))
     return fig
 
 def fig_perdas(df):
     cats = ["Chuva / Umidade","Sem Apontamento","Quebra","Aguardando Transbordo",
-            "Manobra","Manutenção Programada","Abastecimento"]
+            "Aguardando Colhedora","Manobra","Manutenção Programada","Abastecimento"]
     agg  = df[df["Apontamento"].isin(cats)].groupby("Apontamento")["Horas"].sum()
     agg  = agg[agg > 0].sort_values()
     if agg.empty: return go.Figure()
@@ -686,78 +559,78 @@ def fig_perdas(df):
         text=[f"{v:.1f}h" for v in agg.values],
         textposition="outside", textfont=dict(color="#e0e0e0"),
         hovertemplate="<b>%{y}</b><br>%{x:.1f}h<extra></extra>"))
-    fig.update_layout(**FIG_L, height=max(260, len(agg)*38+60),
-        margin=dict(l=ml+20, r=60, t=10, b=10),
+    fig.update_layout(**FIG_L, height=max(260,len(agg)*38+60),
+        margin=dict(l=ml+20,r=60,t=10,b=10),
         xaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,0.1)",title="horas",color="#e0e0e0"),
-        yaxis=dict(showgrid=False, color="#e0e0e0"))
+        yaxis=dict(showgrid=False,color="#e0e0e0"))
     return fig
 
 def fig_disponibilidade(disp_df):
     fig = go.Figure()
-    fig.add_trace(go.Bar(name="Disponível", x=disp_df["Frota"], y=disp_df["Disponibilidade"].round(1),
-        marker_color=C_DISP,
+    fig.add_trace(go.Bar(name="Disponível",x=disp_df["Frota"],
+        y=disp_df["Disponibilidade"].round(1),marker_color=C_DISP,
         text=disp_df["Disponibilidade"].round(1).astype(str)+"%",
-        textposition="inside", textfont=dict(color="#fff"),
+        textposition="inside",textfont=dict(color="#fff"),
         hovertemplate="<b>%{x}</b><br>Disp: %{y:.1f}%<extra></extra>"))
-    fig.add_trace(go.Bar(name="Quebra", x=disp_df["Frota"], y=disp_df["Indisponibilidade"].round(1),
-        marker_color=C_MANUTENCAO,
+    fig.add_trace(go.Bar(name="Quebra",x=disp_df["Frota"],
+        y=disp_df["Indisponibilidade"].round(1),marker_color=C_MANUTENCAO,
         text=disp_df["Indisponibilidade"].round(1).astype(str)+"%",
-        textposition="inside", textfont=dict(color="#fff"),
+        textposition="inside",textfont=dict(color="#fff"),
         hovertemplate="<b>%{x}</b><br>Quebra: %{y:.1f}%<extra></extra>"))
-    fig.update_layout(**FIG_L, barmode="stack", height=260,
-        xaxis=dict(showgrid=False, color="#e0e0e0"), margin=dict(l=4,r=4,t=4,b=4),
+    fig.update_layout(**FIG_L,barmode="stack",height=260,
+        xaxis=dict(showgrid=False,color="#e0e0e0"),margin=dict(l=4,r=4,t=4,b=4),
         yaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,0.1)",title="%",
-                   range=[0,105], color="#e0e0e0"),
-        legend=dict(orientation="h", y=1.1, font=dict(color="#e0e0e0")))
+                   range=[0,105],color="#e0e0e0"),
+        legend=dict(orientation="h",y=1.1,font=dict(color="#e0e0e0")))
     return fig
 
 def fig_motor_elevador(df_perf):
     if df_perf.empty: return go.Figure()
     fig = go.Figure()
-    fig.add_trace(go.Bar(name="Motor Ligado", x=df_perf["NomeFrota"],
-        y=df_perf["TempoMotorLigado"].round(1), marker_color=C_MOTOR,
+    fig.add_trace(go.Bar(name="Motor Ligado",x=df_perf["NomeFrota"],
+        y=df_perf["TempoMotorLigado"].round(1),marker_color=C_MOTOR,
         text=df_perf["TempoMotorLigado"].round(1).astype(str)+"h",
-        textposition="inside", textfont=dict(color="#fff"),
+        textposition="inside",textfont=dict(color="#fff"),
         hovertemplate="<b>%{x}</b><br>Motor: %{y:.1f}h<extra></extra>"))
-    fig.add_trace(go.Bar(name="Elevador", x=df_perf["NomeFrota"],
-        y=df_perf["TempoElevador"].round(1), marker_color=C_ELEVADOR,
+    fig.add_trace(go.Bar(name="Elevador",x=df_perf["NomeFrota"],
+        y=df_perf["TempoElevador"].round(1),marker_color=C_ELEVADOR,
         text=df_perf["TempoElevador"].round(1).astype(str)+"h",
-        textposition="inside", textfont=dict(color="#fff"),
+        textposition="inside",textfont=dict(color="#fff"),
         hovertemplate="<b>%{x}</b><br>Elevador: %{y:.1f}h<extra></extra>"))
-    fig.update_layout(**FIG_L, barmode="group", height=280,
-        xaxis=dict(showgrid=False, color="#e0e0e0"), margin=dict(l=4,r=4,t=4,b=4),
+    fig.update_layout(**FIG_L,barmode="group",height=280,
+        xaxis=dict(showgrid=False,color="#e0e0e0"),margin=dict(l=4,r=4,t=4,b=4),
         yaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,0.1)",title="horas",color="#e0e0e0"),
-        legend=dict(orientation="h", y=1.12, font=dict(color="#e0e0e0")))
+        legend=dict(orientation="h",y=1.12,font=dict(color="#e0e0e0")))
     return fig
 
 def fig_temperaturas(row):
     labels=["Motor","Óleo Hidráulico"]
-    meds=[row.get("TempMedMotor",0), row.get("TempMedOleo",0)]
-    maxs=[row.get("TempMaxMotor",0), row.get("TempMaxOleo",0)]
-    mins=[row.get("TempMinMotor",0), row.get("TempMinOleo",0)]
+    meds=[row.get("TempMedMotor",0),row.get("TempMedOleo",0)]
+    maxs=[row.get("TempMaxMotor",0),row.get("TempMaxOleo",0)]
+    mins=[row.get("TempMinMotor",0),row.get("TempMinOleo",0)]
     cores=["#E24B4A","#378ADD"]
     fig=go.Figure()
     for lb,md,mn,mx,co in zip(labels,meds,mins,maxs,cores):
-        fig.add_trace(go.Bar(name=lb, x=[lb], y=[md], marker_color=co,
+        fig.add_trace(go.Bar(name=lb,x=[lb],y=[md],marker_color=co,
             text=f"méd {md:.0f}° · máx {mx:.0f}°",
-            textposition="inside", textfont=dict(color="#fff", size=11),
+            textposition="inside",textfont=dict(color="#fff",size=11),
             error_y=dict(type="data",symmetric=False,
-                         array=[max(0,mx-md)], arrayminus=[max(0,md-mn)]),
+                         array=[max(0,mx-md)],arrayminus=[max(0,md-mn)]),
             hovertemplate=f"<b>{lb}</b><br>méd {md}°C · máx {mx}°C<extra></extra>"))
-    fig.update_layout(**FIG_L, height=260, showlegend=False,
+    fig.update_layout(**FIG_L,height=260,showlegend=False,
         margin=dict(l=55,r=20,t=20,b=10),
         yaxis=dict(title="°C",showgrid=True,gridcolor="rgba(255,255,255,0.1)",color="#e0e0e0"),
-        xaxis=dict(showgrid=False, color="#e0e0e0"))
+        xaxis=dict(showgrid=False,color="#e0e0e0"))
     return fig
 
-def fig_gauge(valor, titulo, maximo=100, cor=C_PRODUTIVO, sufixo="%"):
-    fig=go.Figure(go.Indicator(mode="gauge+number", value=round(valor,1),
-        number=dict(suffix=sufixo, font=dict(size=22, color=cor)),
+def fig_gauge(valor,titulo,maximo=100,cor=C_PRODUTIVO,sufixo="%"):
+    fig=go.Figure(go.Indicator(mode="gauge+number",value=round(valor,1),
+        number=dict(suffix=sufixo,font=dict(size=22,color=cor)),
         gauge=dict(axis=dict(range=[0,maximo],tickfont=dict(color="#e0e0e0")),
                    bar=dict(color=cor,thickness=0.6),bgcolor="rgba(255,255,255,0.05)",
                    borderwidth=0,steps=[dict(range=[0,maximo],color="rgba(255,255,255,0.05)")]),
-        title=dict(text=titulo, font=dict(size=12, color="#aaa"))))
-    fig.update_layout(**FIG_L, height=200, margin=dict(l=20,r=20,t=40,b=20))
+        title=dict(text=titulo,font=dict(size=12,color="#aaa"))))
+    fig.update_layout(**FIG_L,height=200,margin=dict(l=20,r=20,t=40,b=20))
     return fig
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -769,7 +642,7 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("### Dados SharePoint")
-    fonte = st.radio("Fonte", ["SharePoint (auto)","Upload manual"], label_visibility="collapsed")
+    fonte = st.radio("Fonte",["SharePoint (auto)","Upload manual"],label_visibility="collapsed")
 
     sp_data = {}
     if fonte == "SharePoint (auto)":
@@ -783,25 +656,31 @@ with st.sidebar:
         up_apt  = st.file_uploader("XLSX — Apontamentos Consolidado", type=["xlsx","csv"], key="ua")
         up_perf = st.file_uploader("XLSX — Performance Consolidado",  type=["xlsx","csv"], key="up")
         up_veic = st.file_uploader("XLSX — Veículos Agritel",         type=["xlsx","csv"], key="uv")
+        up_cc   = st.file_uploader("XLSX — Frotas Centro de Custo",   type=["xlsx","csv"], key="uc")
         if up_apt:  sp_data["apt_consol"]  = up_apt.read()
         if up_perf: sp_data["perf_consol"] = up_perf.read()
         if up_veic: sp_data["veiculos"]    = up_veic.read()
+        if up_cc:   sp_data["frotas_cc"]   = up_cc.read()
 
     if not sp_data.get("apt_consol"):
         st.warning("Aguardando APONTAMENTOS_CONSOLIDADO.xlsx")
         st.stop()
 
-    # ── Veículos → TipoMaq ───────────────────────────────────────────────────
+    if not sp_data.get("frotas_cc"):
+        st.warning("Aguardando Frotas_CentroDeCusto.xlsx")
+        st.stop()
+
+    # ── Mapas base ───────────────────────────────────────────────────────────
+    cc_map       = load_frotas_cc(sp_data["frotas_cc"])      # {frota_num: (frente, tipo)}
     veic_df      = load_veiculos(sp_data["veiculos"]) if sp_data.get("veiculos") else None
-    veic_tipomaq = build_veic_tipomaq(veic_df)       # {frota_num: tipo_maq}
+    veic_tipomaq = build_veic_tipomaq(veic_df)               # {frota_num: tipo_maq}
 
     st.markdown("---")
 
     # ── Tipo de operação ─────────────────────────────────────────────────────
     st.markdown("### Operação")
-    tipo_opcao = st.radio("Tipo",
-        ["🌾  Colheita", "🚜  Agro"],
-        horizontal=True, label_visibility="collapsed", key="tipo_operacao")
+    tipo_opcao = st.radio("Tipo",["🌾  Colheita","🚜  Agro"],
+                          horizontal=True,label_visibility="collapsed",key="tipo_operacao")
     APP_TIPO = "colheita" if "Colheita" in tipo_opcao else "agro"
     CONF     = TIPO_CFG[APP_TIPO]
     st.session_state["tipo_operacao_val"] = APP_TIPO
@@ -831,19 +710,18 @@ with st.sidebar:
         f"**{dias_periodo}** dias · **{period_h:.0f}h**/máquina"
     )
 
-    # ── Carrega os consolidados ───────────────────────────────────────────────
+    # ── Carrega consolidados ─────────────────────────────────────────────────
     df_apt_raw  = _load_apt_raw(sp_data["apt_consol"])
-    df_perf_raw = _load_perf_raw(sp_data["perf_consol"]) if sp_data.get("perf_consol") else pd.DataFrame()
+    df_perf_raw = (_load_perf_raw(sp_data["perf_consol"])
+                   if sp_data.get("perf_consol") else pd.DataFrame())
 
-    # ── Filtros de Frente e Tipo de Máquina ──────────────────────────────────
     st.markdown("---")
     st.markdown("### Filtros")
 
-    # Frentes disponíveis via _FROTA_FRENTE (não depende mais de device_map)
+    # Frentes vindas do cc_map (fonte dinâmica — sem hardcode)
     frentes_disponiveis = sorted({
-        frente
-        for _num, (frente, tipo) in _FROTA_FRENTE.items()
-        if tipo == APP_TIPO and frente != "Máquina sem grupo"
+        frente for fn, (frente, tipo) in cc_map.items()
+        if tipo == APP_TIPO
     })
 
     frentes_sel = st.multiselect(
@@ -851,20 +729,15 @@ with st.sidebar:
         key="frentes_sel", placeholder="Todas as frentes"
     ) or frentes_disponiveis
 
-    # Tipos de máquina — data-driven se veic_tipomaq disponível, senão padrão
+    # Tipos de máquina
     if veic_tipomaq:
-        _tipos_do_tipo = {
-            veic_tipomaq.get(num, "Outro")
-            for num, (_fr, tipo) in _FROTA_FRENTE.items()
-            if tipo == APP_TIPO
-        } - {"Outro"}
-        tipos_maq_disponiveis = sorted(_tipos_do_tipo) or (
-            ["Colhedora","Transbordo"] if APP_TIPO == "colheita" else ["Trator"]
-        )
+        _tms = {veic_tipomaq.get(fn,"Outro")
+                for fn,(fr,tp) in cc_map.items() if tp==APP_TIPO} - {"Outro"}
+        tipos_maq_disponiveis = sorted(_tms) or (
+            ["Colhedora","Transbordo"] if APP_TIPO=="colheita" else ["Trator"])
     else:
-        tipos_maq_disponiveis = (
-            ["Colhedora","Transbordo"] if APP_TIPO == "colheita" else ["Trator"]
-        )
+        tipos_maq_disponiveis = (["Colhedora","Transbordo"]
+                                  if APP_TIPO=="colheita" else ["Trator"])
 
     tipos_maq_sel = st.multiselect(
         "Tipo de máquina", tipos_maq_disponiveis, default=tipos_maq_disponiveis,
@@ -872,25 +745,23 @@ with st.sidebar:
     ) or tipos_maq_disponiveis
 
     # ── Aplica filtros ────────────────────────────────────────────────────────
-    df_apt  = filter_apt(df_apt_raw,  data_ini, data_fim,
-                         veic_tipomaq, APP_TIPO, frentes_sel, tipos_maq_sel)
-    df_perf = filter_perf(df_perf_raw, data_ini, data_fim,
-                          APP_TIPO, frentes_sel, tipos_maq_sel) \
-              if not df_perf_raw.empty else pd.DataFrame()
+    df_apt  = filter_apt(df_apt_raw, data_ini, data_fim,
+                         cc_map, veic_tipomaq, APP_TIPO, frentes_sel, tipos_maq_sel)
+    df_perf = (filter_perf(df_perf_raw, data_ini, data_fim,
+                           cc_map, APP_TIPO, frentes_sel, tipos_maq_sel)
+               if not df_perf_raw.empty else pd.DataFrame())
     disp_df = calc_disponibilidade(df_apt) if not df_apt.empty else pd.DataFrame()
 
-    # Frota individual
     frotas_disp = ["Todas"] + sorted(df_apt["Frota"].unique().tolist())
     frota_sel   = st.selectbox("Frota", frotas_disp, key="frota_sel")
 
-    # Badge do banco de dados
     if not df_apt_raw.empty:
         bd_min = df_apt_raw["Data"].min().strftime("%d/%m/%Y")
         bd_max = df_apt_raw["Data"].max().strftime("%d/%m/%Y")
-        n_frotas_bd = df_apt_raw["Frota"].nunique()
+        n_maq  = df_apt_raw["Frota"].nunique()
         st.markdown(
             f'<div class="api-badge">📦 BD: {bd_min} → {bd_max} '
-            f'· {n_frotas_bd} máquinas · {len(df_apt_raw):,} registros</div>'.replace(",","."),
+            f'· {n_maq} máquinas</div>',
             unsafe_allow_html=True)
 
     st.markdown("---")
@@ -912,25 +783,25 @@ if df_apt.empty:
     st.warning("Nenhum dado de apontamento para o período e filtros selecionados.")
     st.stop()
 
-df_f      = df_apt  if frota_sel == "Todas" else df_apt[df_apt["Frota"] == frota_sel]
-df_perf_f = (df_perf if frota_sel == "Todas"
-             else df_perf[df_perf["NomeFrota"] == frota_sel]) \
+df_f      = df_apt  if frota_sel=="Todas" else df_apt[df_apt["Frota"]==frota_sel]
+df_perf_f = (df_perf if frota_sel=="Todas"
+             else df_perf[df_perf["NomeFrota"]==frota_sel]) \
             if not df_perf.empty else pd.DataFrame()
 
 num_frotas = max(df_f["Frota"].nunique(), 1)
 total_h    = df_f["Horas"].sum()
-col_h      = df_f[df_f["Apontamento"]=="Colhendo"]["Horas"].sum()
+col_h      = df_f[df_f["Apontamento"].isin(["Colhendo","Trabalhando"])]["Horas"].sum()
 man_h      = df_f[df_f["Apontamento"]=="Manobra"]["Horas"].sum()
 sa_h       = df_f[df_f["Categoria"]=="Sem Apontamento"]["Horas"].sum()
 qbr_h      = df_f[df_f["Apontamento"]=="Quebra"]["Horas"].sum()
 chuva_h    = df_f[df_f["Apontamento"]=="Chuva / Umidade"]["Horas"].sum()
-agt_h      = df_f[df_f["Apontamento"]=="Aguardando Transbordo"]["Horas"].sum()
+agt_h      = df_f[df_f["Apontamento"].isin(["Aguardando Transbordo","Aguardando Colhedora"])]["Horas"].sum()
 improd     = chuva_h + qbr_h + agt_h
 
-ef_col   = safe(col_h,   total_h)
-ef_man   = safe(man_h,   col_h + man_h)
-ef_imp   = safe(improd,  total_h)
-ef_sa    = safe(sa_h,    total_h)
+ef_col   = safe(col_h,  total_h)
+ef_man   = safe(man_h,  col_h + man_h)
+ef_imp   = safe(improd, total_h)
+ef_sa    = safe(sa_h,   total_h)
 disp_m   = safe(total_h - qbr_h, total_h)
 ef_chuva = safe(chuva_h, total_h)
 ef_qbr   = safe(qbr_h,   total_h)
@@ -944,14 +815,13 @@ ef_trab    = safe(elevador_h, motor_h)
 # BANNER
 # ══════════════════════════════════════════════════════════════════════════════
 def banner():
-    fr_label = "Todas as frotas" if frota_sel == "Todas" else frota_sel
+    fr_label = "Todas as frotas" if frota_sel=="Todas" else frota_sel
     st.markdown(
         f'<div class="periodo-badge">'
         f'📅 {data_ini.strftime("%d/%m/%Y")} – {data_fim.strftime("%d/%m/%Y")} '
         f'· <b>{dias_periodo}d / {period_h:.0f}h</b> por máquina '
         f'&nbsp;|&nbsp; {CONF["icone"]} {fr_label} · {num_frotas} máquina(s)'
-        f'</div>',
-        unsafe_allow_html=True)
+        f'</div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PÁGINAS
@@ -973,9 +843,9 @@ if pagina == "Visão geral":
                     "text-transform:uppercase;letter-spacing:.08em'>⚙️ Motor & Elevador</p>",
                     unsafe_allow_html=True)
         cm1,cm2,cm3,cm4 = st.columns(4)
-        cm1.metric("🔵 Motor Ligado",   f"{motor_h:.1f}h",     f"{motor_h/num_frotas:.1f}h/máq")
-        cm2.metric("🟣 Hora Elevador",  f"{elevador_h:.1f}h",  f"{elevador_h/num_frotas:.1f}h/máq")
-        cm3.metric("📊 Efic. Trabalho", f"{ef_trab:.1f}%",     "Elevador ÷ Motor Ligado")
+        cm1.metric("🔵 Motor Ligado",   f"{motor_h:.1f}h",    f"{motor_h/num_frotas:.1f}h/máq")
+        cm2.metric("🟣 Hora Elevador",  f"{elevador_h:.1f}h", f"{elevador_h/num_frotas:.1f}h/máq")
+        cm3.metric("📊 Efic. Trabalho", f"{ef_trab:.1f}%",    "Elevador ÷ Motor Ligado")
         cons_total = df_perf_f["ConsumoTotal"].sum()
         cm4.metric("🛢️ Consumo total",  f"{cons_total:,.0f} L".replace(",","."))
 
@@ -986,7 +856,7 @@ if pagina == "Visão geral":
     ci0.metric("⚠️ Improdutivo total",     f"{ef_imp:.1f}%",  f"{improd:.1f}h")
     ci1.metric("🌧️ Chuva / Umidade",      f"{ef_chuva:.1f}%",f"{chuva_h:.1f}h")
     ci2.metric("🔧 Quebra",                f"{ef_qbr:.1f}%",  f"{qbr_h:.1f}h")
-    ci3.metric("⏳ Aguardando Transbordo", f"{ef_agt:.1f}%",  f"{agt_h:.1f}h")
+    ci3.metric("⏳ Aguardando",            f"{ef_agt:.1f}%",  f"{agt_h:.1f}h")
 
     if not df_perf_f.empty:
         cons_med = df_perf_f["TaxaMedTrab"].mean()
@@ -1001,32 +871,31 @@ if pagina == "Visão geral":
     if not df_perf_f.empty:
         st.markdown("**Hora Motor Ligado vs Hora Elevador**")
         st.plotly_chart(fig_motor_elevador(df_perf_f), use_container_width=True,
-                        config={"displayModeBar": False})
+                        config={"displayModeBar":False})
         st.divider()
 
     if not disp_df.empty:
         st.markdown("**Disponibilidade mecânica por frota**")
         st.plotly_chart(fig_disponibilidade(disp_df), use_container_width=True,
-                        config={"displayModeBar": False})
+                        config={"displayModeBar":False})
         st.divider()
 
-    cl, cr = st.columns(2)
+    cl,cr = st.columns(2)
     with cl:
         st.markdown("**Distribuição por categoria**")
-        st.plotly_chart(fig_donut(df_f), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_donut(df_f), use_container_width=True, config={"displayModeBar":False})
     with cr:
         st.markdown("**Comparativo entre frotas**")
         tots = df_apt.groupby("Frota")["Horas"].sum()
-        kc   = st.columns(min(len(tots)+1, 6))
+        kc   = st.columns(min(len(tots)+1,6))
         kc[0].metric("⏱️ Total", f"{df_apt['Horas'].sum():.1f}h")
-        for j, (fr, hr) in enumerate(tots.items()):
-            if j+1 < len(kc):
-                kc[j+1].metric(f"⏱️ {fr}", f"{hr:.1f}h")
+        for j,(fr,hr) in enumerate(tots.items()):
+            if j+1 < len(kc): kc[j+1].metric(f"⏱️ {fr}", f"{hr:.1f}h")
         st.plotly_chart(fig_comparativo(df_apt), use_container_width=True,
-                        config={"displayModeBar": False})
+                        config={"displayModeBar":False})
 
     st.markdown("**Perdas e paradas — horas acumuladas**")
-    st.plotly_chart(fig_perdas(df_f), use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig_perdas(df_f), use_container_width=True, config={"displayModeBar":False})
 
 
 elif pagina == "Apontamentos":
@@ -1039,22 +908,22 @@ elif pagina == "Apontamentos":
     c3.metric("❓ Sem apontamento", f"{ef_sa:.1f}%",  f"{sa_h:.1f}h")
     st.divider()
     st.markdown("**Horas por apontamento**")
-    st.plotly_chart(fig_barras_h(df_f), use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig_barras_h(df_f), use_container_width=True, config={"displayModeBar":False})
     st.divider()
-    cl, cr = st.columns(2)
+    cl,cr = st.columns(2)
     with cl:
         st.markdown("**Distribuição por categoria**")
-        st.plotly_chart(fig_donut(df_f), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_donut(df_f), use_container_width=True, config={"displayModeBar":False})
     with cr:
         st.markdown("**Resumo por categoria**")
         cats = df_f.groupby("Categoria")["Horas"].sum().reset_index()
-        cats = cats[cats["Horas"] > 0].sort_values("Horas", ascending=False)
-        cats["pct"]   = (cats["Horas"] / total_h * 100).round(1).astype(str) + "%"
+        cats = cats[cats["Horas"]>0].sort_values("Horas",ascending=False)
+        cats["pct"]   = (cats["Horas"]/total_h*100).round(1).astype(str)+"%"
         cats["Horas"] = cats["Horas"].round(1)
         mh = cats["Horas"].max()
-        for _, row in cats.iterrows():
-            cor = CAT_CORES.get(row["Categoria"], "#888")
-            pb  = row["Horas"] / mh * 100
+        for _,row in cats.iterrows():
+            cor = CAT_CORES.get(row["Categoria"],"#888")
+            pb  = row["Horas"]/mh*100
             st.markdown(
                 f'<div style="margin-bottom:10px">'
                 f'<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
@@ -1069,21 +938,16 @@ elif pagina == "Apontamentos":
 elif pagina == "Telemetria":
     st.markdown(f"## {CONF['icone']} Telemetria — Performance")
     banner()
-    st.markdown('<div class="api-badge">📡 Motor · Elevador · Combustível · Temperaturas</div>',
-                unsafe_allow_html=True)
-
     if df_perf_f.empty:
         st.warning("Nenhum dado de performance para este período/frota.")
         st.stop()
 
-    cols = st.columns(min(len(df_perf_f), 4))
-    for i, (_, row) in enumerate(df_perf_f.iterrows()):
+    cols = st.columns(min(len(df_perf_f),4))
+    for i,(_,row) in enumerate(df_perf_f.iterrows()):
         with cols[i % len(cols)]:
             st.markdown(f"**{row['NomeFrota']}**")
-
-            # Disponibilidade (de disp_df — chave = "Frota 1201")
             if not disp_df.empty:
-                d_row = disp_df[disp_df["Frota"] == row["NomeFrota"]]   # ← FIX: sem .replace()
+                d_row = disp_df[disp_df["Frota"]==row["NomeFrota"]]
                 if not d_row.empty:
                     dv = d_row.iloc[0]["Disponibilidade"]
                     qv = d_row.iloc[0]["Quebra"]
@@ -1094,7 +958,6 @@ elif pagina == "Telemetria":
                         f'<span style="font-size:20px;font-weight:700;color:{C_DISP}">{dv:.1f}%</span>'
                         f'<span style="font-size:10px;color:#888;margin-left:8px">({qv:.1f}h quebra)</span>'
                         f'</div>', unsafe_allow_html=True)
-
             ef_el = safe(row.get("TempoElevador",0), row.get("TempoMotorLigado",1))
             st.markdown(
                 f'<div style="padding:8px 12px;border-radius:8px;'
@@ -1104,23 +967,21 @@ elif pagina == "Telemetria":
                 f'<span style="font-size:10px;color:#888;margin-left:8px">'
                 f'({row.get("TempoElevador",0):.1f}h / {row.get("TempoMotorLigado",0):.1f}h)</span>'
                 f'</div>', unsafe_allow_html=True)
-
-            metricas = [
-                ("Motor ligado",        f"{row.get('TempoMotorLigado',0):.1f}h",   C_MOTOR),
-                ("Elevador ligado",     f"{row.get('TempoElevador',0):.1f}h",      C_ELEVADOR),
-                ("Em trabalho",         f"{row.get('TempoTrabalho',0):.1f}h",      "#e0e0e0"),
-                ("Manobra",             f"{row.get('TempoManobra',0):.1f}h",       "#e0e0e0"),
-                ("Ocioso",              f"{row.get('TempoOcioso',0):.1f}h",        "#e0e0e0"),
-                ("Deslocando",          f"{row.get('TempoDeslocando',0):.1f}h",    "#e0e0e0"),
+            for lb,val,cor in [
+                ("Motor ligado",       f"{row.get('TempoMotorLigado',0):.1f}h",  C_MOTOR),
+                ("Elevador ligado",    f"{row.get('TempoElevador',0):.1f}h",     C_ELEVADOR),
+                ("Em trabalho",        f"{row.get('TempoTrabalho',0):.1f}h",     "#e0e0e0"),
+                ("Manobra",            f"{row.get('TempoManobra',0):.1f}h",      "#e0e0e0"),
+                ("Ocioso",             f"{row.get('TempoOcioso',0):.1f}h",       "#e0e0e0"),
+                ("Deslocando",         f"{row.get('TempoDeslocando',0):.1f}h",   "#e0e0e0"),
                 ("Consumo total",
-                 f"{int(row.get('ConsumoTotal',0)):,} L".replace(",","."),         "#e0e0e0"),
-                ("Taxa cons. (trab.)",  f"{row.get('TaxaMedTrab',0):.1f} L/h",    "#e0e0e0"),
-                ("Temp. méd. motor",    f"{row.get('TempMedMotor',0):.1f}°C",     "#E24B4A"),
-                ("Temp. máx. motor",    f"{row.get('TempMaxMotor',0):.1f}°C",     "#E24B4A"),
-                ("Temp. méd. óleo",     f"{row.get('TempMedOleo',0):.1f}°C",      "#378ADD"),
-                ("Temp. máx. óleo",     f"{row.get('TempMaxOleo',0):.1f}°C",      "#378ADD"),
-            ]
-            for lb, val, cor in metricas:
+                 f"{int(row.get('ConsumoTotal',0)):,} L".replace(",","."),       "#e0e0e0"),
+                ("Taxa cons. (trab.)", f"{row.get('TaxaMedTrab',0):.1f} L/h",   "#e0e0e0"),
+                ("Temp. méd. motor",   f"{row.get('TempMedMotor',0):.1f}°C",    "#E24B4A"),
+                ("Temp. máx. motor",   f"{row.get('TempMaxMotor',0):.1f}°C",    "#E24B4A"),
+                ("Temp. méd. óleo",    f"{row.get('TempMedOleo',0):.1f}°C",     "#378ADD"),
+                ("Temp. máx. óleo",    f"{row.get('TempMaxOleo',0):.1f}°C",     "#378ADD"),
+            ]:
                 st.markdown(
                     f'<div style="display:flex;justify-content:space-between;padding:6px 10px;'
                     f'background:rgba(255,255,255,.05);border-radius:6px;margin-bottom:4px">'
@@ -1130,47 +991,45 @@ elif pagina == "Telemetria":
 
     st.divider()
     st.markdown("**Temperaturas — méd / máx**")
-    tc = st.columns(min(len(df_perf_f), 4))
-    for i, (_, row) in enumerate(df_perf_f.iterrows()):
+    tc = st.columns(min(len(df_perf_f),4))
+    for i,(_,row) in enumerate(df_perf_f.iterrows()):
         with tc[i % len(tc)]:
             st.markdown(f"*{row['NomeFrota']}*")
             st.plotly_chart(fig_temperaturas(row), use_container_width=True,
-                            config={"displayModeBar": False})
+                            config={"displayModeBar":False})
 
     st.divider()
     st.markdown("**Gauges operacionais**")
-    gc = st.columns(min(len(df_perf_f) * 3, 9))
-    for idx, (_, row) in enumerate(df_perf_f.iterrows()):
-        ef_m  = safe(row.get("TempoTrabalho",0),  row.get("TempoMotorLigado",1))
-        ef_el = safe(row.get("TempoElevador",0),  row.get("TempoMotorLigado",1))
-        oc    = safe(row.get("TempoOcioso",0),    row.get("TempoMotorLigado",1))
-        base  = idx * 3
+    gc = st.columns(min(len(df_perf_f)*3, 9))
+    for idx,(_,row) in enumerate(df_perf_f.iterrows()):
+        ef_m  = safe(row.get("TempoTrabalho",0), row.get("TempoMotorLigado",1))
+        ef_el = safe(row.get("TempoElevador",0), row.get("TempoMotorLigado",1))
+        oc    = safe(row.get("TempoOcioso",0),   row.get("TempoMotorLigado",1))
+        base  = idx*3
         with gc[base]:
             st.plotly_chart(fig_gauge(ef_m,  f"{row['NomeFrota']}\nEfic. Motor",    cor=C_PRODUTIVO),
-                            use_container_width=True, config={"displayModeBar": False})
+                            use_container_width=True,config={"displayModeBar":False})
         with gc[base+1]:
             st.plotly_chart(fig_gauge(ef_el, f"{row['NomeFrota']}\nEfic. Elevador", cor=C_ELEVADOR),
-                            use_container_width=True, config={"displayModeBar": False})
+                            use_container_width=True,config={"displayModeBar":False})
         with gc[base+2]:
             st.plotly_chart(fig_gauge(oc,    f"{row['NomeFrota']}\nOcioso",         cor=C_MANUTENCAO),
-                            use_container_width=True, config={"displayModeBar": False})
+                            use_container_width=True,config={"displayModeBar":False})
 
 
 elif pagina == "Por frota":
     frotas_lista = sorted(df_apt["Frota"].unique().tolist())
     fr4 = st.selectbox("Selecione a frota", frotas_lista, key="fr4")
 
-    sub_apt  = df_apt[df_apt["Frota"] == fr4]
-    sub_perf = df_perf[df_perf["NomeFrota"] == fr4] if not df_perf.empty else pd.DataFrame()
-
-    # FIX v5: disp_df["Frota"] = "Frota 1201" — mesma chave de df_apt
-    sub_disp = disp_df[disp_df["Frota"] == fr4] if not disp_df.empty else pd.DataFrame()
+    sub_apt  = df_apt[df_apt["Frota"]==fr4]
+    sub_perf = df_perf[df_perf["NomeFrota"]==fr4] if not df_perf.empty else pd.DataFrame()
+    sub_disp = disp_df[disp_df["Frota"]==fr4] if not disp_df.empty else pd.DataFrame()
 
     st.markdown(f"## {CONF['icone']} {fr4} — Análise individual")
     banner()
 
     tot_f = sub_apt["Horas"].sum()
-    col_f = sub_apt[sub_apt["Apontamento"]=="Colhendo"]["Horas"].sum()
+    col_f = sub_apt[sub_apt["Apontamento"].isin(["Colhendo","Trabalhando"])]["Horas"].sum()
     man_f = sub_apt[sub_apt["Apontamento"]=="Manobra"]["Horas"].sum()
     qbr_f = sub_apt[sub_apt["Apontamento"]=="Quebra"]["Horas"].sum()
     d_f   = safe(tot_f - qbr_f, tot_f)
@@ -1190,24 +1049,25 @@ elif pagina == "Por frota":
         k5.metric("🔵 Motor Ligado",  f"{row.get('TempoMotorLigado',0):.1f}h")
         k6.metric("🟣 Hora Elevador", f"{row.get('TempoElevador',0):.1f}h",
                   f"Efic. {ef_el:.1f}%")
-        k7.metric("🛢️ Consumo",       f"{int(row.get('ConsumoTotal',0)):,} L".replace(",","."),
+        k7.metric("🛢️ Consumo",
+                  f"{int(row.get('ConsumoTotal',0)):,} L".replace(",","."),
                   f"{row.get('TaxaMedTrab',0):.1f} L/h")
         oc = safe(row.get("TempoOcioso",0), row.get("TempoMotorLigado",1))
-        k8.metric("⏸️ Ocioso",        f"{oc:.1f}%", f"{row.get('TempoOcioso',0):.1f}h")
+        k8.metric("⏸️ Ocioso", f"{oc:.1f}%", f"{row.get('TempoOcioso',0):.1f}h")
 
     st.divider()
-    cl, cr = st.columns(2)
+    cl,cr = st.columns(2)
     with cl:
         st.markdown("**Uso do tempo**")
         st.plotly_chart(fig_donut(sub_apt), use_container_width=True,
-                        config={"displayModeBar": False})
+                        config={"displayModeBar":False})
     with cr:
         st.markdown("**Apontamentos detalhados**")
         st.plotly_chart(fig_barras_h(sub_apt), use_container_width=True,
-                        config={"displayModeBar": False})
+                        config={"displayModeBar":False})
 
     if not sub_perf.empty:
         st.divider()
         st.markdown("**Temperaturas**")
         st.plotly_chart(fig_temperaturas(sub_perf.iloc[0]), use_container_width=True,
-                        config={"displayModeBar": False})
+                        config={"displayModeBar":False})
