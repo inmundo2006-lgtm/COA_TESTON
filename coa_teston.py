@@ -478,12 +478,12 @@ def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
             txt = _norm(str(nome_maquina))
             tipo   = "colheita" if any(k in txt for k in KEYWORDS_COLHEITA) else "agro"
             frente = "Sem frente"
-        tipo_maq = nome_to_tipomaq.get(frota_n, _tipo_maq_from_name(str(nome_maquina)))
+        tipo_maq = _tipo_maq_from_name(str(nome_maquina))
         return tipo, frente, tipo_maq
 
     nome_to_tipomaq_perf: dict[str, str] = {}
 
-    classif = tmp["NomeCompleto"].apply(_classify_perf_row)
+    classif = tmp["DeviceId"].apply(_classify_perf_row)
     tmp["Tipo"]    = classif.apply(lambda x: x[0])
     tmp["Frente"]  = classif.apply(lambda x: x[1])
     tmp["TipoMaq"] = classif.apply(lambda x: x[2])
