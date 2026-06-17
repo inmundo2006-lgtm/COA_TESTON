@@ -179,10 +179,11 @@ def _read_df(content: bytes) -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(content))
 
 def _tipo_maq_from_name(name: str) -> str:
+    """Colhedora ou Transbordo (trator = transbordo no contexto de colheita)."""
     n = _norm(str(name))
-    if "colhedora" in n:                      return "Colhedora"
-    if "transbordo" in n or "caminhao" in n:  return "Transbordo"
-    if "trator" in n or "pulveriz" in n:      return "Trator"
+    if "colhedora" in n:                                          return "Colhedora"
+    if "transbordo" in n or "caminhao" in n or "trator" in n:    return "Transbordo"
+    if "pulveriz" in n:                                           return "Transbordo"
     return "Outro"
 
 def _frota_num(frota_str: str) -> str:
@@ -374,8 +375,9 @@ def filter_apt(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
     df["TipoMaq"]  = cl.apply(lambda x: x[3])
 
     df = df[df["Tipo"] == filtrar_tipo]
-    if frentes_sel:     df = df[df["Frente"].isin(frentes_sel)]
-    if tipos_maq_sel:   df = df[df["TipoMaq"].isin(tipos_maq_sel)]
+    if frentes_sel:   df = df[df["Frente"].isin(frentes_sel)]
+    if tipos_maq_sel: df = df[
+        df["TipoMaq"].isin(tipos_maq_sel) | (df["TipoMaq"] == "Outro")]
     return df
 
 
@@ -441,12 +443,9 @@ def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
             frente, tipo = cc_map[fn]
         else:
             frente, tipo = "Sem frente", "colheita"
-        # TipoMaq: veic_tipomaq primeiro, fallback por nome, fallback por tipo
-        tm = veic_tipomaq.get(fn)
-        if not tm:
-            tm = _tipo_maq_from_name(str(nome_maquina))
-        if tm == "Outro":
-            tm = "Colhedora" if tipo == "colheita" else "Trator"
+        # TipoMaq: veic_tipomaq primeiro, fallback por nome
+        # "Outro" = desconhecido — não forçar tipo incorreto
+        tm = veic_tipomaq.get(fn) or _tipo_maq_from_name(str(nome_maquina))
         return tipo, frente, tm
 
     cl             = tmp["DeviceId"].apply(_classify_perf)
@@ -456,7 +455,9 @@ def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
 
     tmp = tmp[tmp["Tipo"] == filtrar_tipo]
     if frentes_sel:   tmp = tmp[tmp["Frente"].isin(frentes_sel)]
-    if tipos_maq_sel: tmp = tmp[tmp["TipoMaq"].isin(tipos_maq_sel)]
+    # "Outro" = tipo desconhecido → sempre exibe (não filtra fora)
+    if tipos_maq_sel: tmp = tmp[
+        tmp["TipoMaq"].isin(tipos_maq_sel) | (tmp["TipoMaq"] == "Outro")]
     if tmp.empty:
         return pd.DataFrame()
 
@@ -987,6 +988,7 @@ elif pagina == "Telemetria":
                 ("Temp. máx. motor",   f"{row.get('TempMaxMotor',0):.1f}°C",    "#E24B4A"),
                 ("Temp. méd. óleo",    f"{row.get('TempMedOleo',0):.1f}°C",     "#378ADD"),
                 ("Temp. máx. óleo",    f"{row.get('TempMaxOleo',0):.1f}°C",     "#378ADD"),
+                ("Reverso Industrial",  f"{int(row.get('ReversoIndustrial',0))} ocorr.", C_MANUTENCAO),
             ]:
                 st.markdown(
                     f'<div style="display:flex;justify-content:space-between;padding:6px 10px;'
