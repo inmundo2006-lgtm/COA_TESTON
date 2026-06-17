@@ -380,7 +380,7 @@ def filter_apt(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
 
 
 def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
-                cc_map: dict,
+                cc_map: dict, veic_tipomaq: dict,
                 filtrar_tipo: str,
                 frentes_sel: list | None = None,
                 tipos_maq_sel: list | None = None) -> pd.DataFrame:
@@ -441,7 +441,13 @@ def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
             frente, tipo = cc_map[fn]
         else:
             frente, tipo = "Sem frente", "colheita"
-        return tipo, frente, _tipo_maq_from_name(str(nome_maquina))
+        # TipoMaq: veic_tipomaq primeiro, fallback por nome, fallback por tipo
+        tm = veic_tipomaq.get(fn)
+        if not tm:
+            tm = _tipo_maq_from_name(str(nome_maquina))
+        if tm == "Outro":
+            tm = "Colhedora" if tipo == "colheita" else "Trator"
+        return tipo, frente, tm
 
     cl             = tmp["DeviceId"].apply(_classify_perf)
     tmp["Tipo"]    = cl.apply(lambda x: x[0])
@@ -748,7 +754,7 @@ with st.sidebar:
     df_apt  = filter_apt(df_apt_raw, data_ini, data_fim,
                          cc_map, veic_tipomaq, APP_TIPO, frentes_sel, tipos_maq_sel)
     df_perf = (filter_perf(df_perf_raw, data_ini, data_fim,
-                           cc_map, APP_TIPO, frentes_sel, tipos_maq_sel)
+                           cc_map, veic_tipomaq, APP_TIPO, frentes_sel, tipos_maq_sel)
                if not df_perf_raw.empty else pd.DataFrame())
     disp_df = calc_disponibilidade(df_apt) if not df_apt.empty else pd.DataFrame()
 
