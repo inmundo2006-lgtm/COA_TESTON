@@ -482,8 +482,6 @@ def filter_perf(df_raw: pd.DataFrame, data_ini: date, data_fim: date,
         return tipo, frente, tipo_maq
 
     nome_to_tipomaq_perf: dict[str, str] = {}
-    if veiculos_df is not None and not veiculos_df.empty:
-        pass  # já calculado via build_device_map; aqui só usamos _FROTA_FRENTE
 
     classif = tmp["NomeCompleto"].apply(_classify_perf_row)
     tmp["Tipo"]    = classif.apply(lambda x: x[0])
