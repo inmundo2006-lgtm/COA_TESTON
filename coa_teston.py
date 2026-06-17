@@ -244,7 +244,7 @@ st.markdown("""
 [data-testid="stMetricLabel"]       {font-size:.72rem!important;text-transform:uppercase;letter-spacing:.05em}
 [data-testid="stMetricDelta"]       {font-size:.72rem!important}
 [data-testid="stSidebar"]           {background-color:#1c1e18}
-[data-testid="stSidebar"] *         {color:#d8dbd4!important}
+[data-testid="stSidebar"] * {color:#d8dbd4!important}
 [data-testid="stSidebar"] h1,[data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3        {color:#a8c832!important}
 div[data-testid="metric-container"] {background:rgba(255,255,255,.05);border-radius:10px;
@@ -878,7 +878,7 @@ with st.sidebar:
     dias_periodo = (data_fim - data_ini).days + 1
     period_h     = dias_periodo * 24.0
     st.caption(
-        f"**{data_ini.strftime('%d/%m/%Y')}** – **{data_fim.strftime('%d/%m/%Y')}**  \n"
+        f"**{data_ini.strftime('%d/%m/%Y')}** – **{data_fim.strftime('%d/%m/%Y')}** \n"
         f"**{dias_periodo}** dias · **{period_h:.0f}h**/máquina"
     )
 
@@ -1206,7 +1206,10 @@ elif pagina == "Por frota":
     fr4 = st.selectbox("Selecione a frota", frotas_lista, key="fr4")
     sub_apt  = df_apt[df_apt["Frota"]==fr4]
     sub_perf = df_perf[df_perf["NomeFrota"]==fr4] if not df_perf.empty else pd.DataFrame()
-    sub_disp = disp_df[disp_df["Frota"]==fr4.replace("Frota ","")]
+    
+    # ── LINHA CORRIGIDA ───────────────────────────────────────────────────────
+    # str(fr4) garante que, caso o selectbox retorne None (lista vazia), não gere AttributeError.
+    sub_disp = disp_df[disp_df["Frota"]==str(fr4).replace("Frota ","")]
 
     st.markdown(f"## {CONF['icone']} {fr4} — Análise individual")
     banner()
