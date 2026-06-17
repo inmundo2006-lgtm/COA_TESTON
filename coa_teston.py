@@ -1006,21 +1006,20 @@ elif pagina == "Telemetria":
 
     st.divider()
     st.markdown("**Gauges operacionais**")
-    gc = st.columns(min(len(df_perf_f)*3, 9))
-    for idx,(_,row) in enumerate(df_perf_f.iterrows()):
+    for _, row in df_perf_f.iterrows():
         ef_m  = safe(row.get("TempoTrabalho",0), row.get("TempoMotorLigado",1))
         ef_el = safe(row.get("TempoElevador",0), row.get("TempoMotorLigado",1))
         oc    = safe(row.get("TempoOcioso",0),   row.get("TempoMotorLigado",1))
-        base  = idx*3
-        with gc[base]:
+        g1, g2, g3 = st.columns(3)
+        with g1:
             st.plotly_chart(fig_gauge(ef_m,  f"{row['NomeFrota']}\nEfic. Motor",    cor=C_PRODUTIVO),
-                            use_container_width=True,config={"displayModeBar":False})
-        with gc[base+1]:
+                            use_container_width=True, config={"displayModeBar":False})
+        with g2:
             st.plotly_chart(fig_gauge(ef_el, f"{row['NomeFrota']}\nEfic. Elevador", cor=C_ELEVADOR),
-                            use_container_width=True,config={"displayModeBar":False})
-        with gc[base+2]:
+                            use_container_width=True, config={"displayModeBar":False})
+        with g3:
             st.plotly_chart(fig_gauge(oc,    f"{row['NomeFrota']}\nOcioso",         cor=C_MANUTENCAO),
-                            use_container_width=True,config={"displayModeBar":False})
+                            use_container_width=True, config={"displayModeBar":False})
 
 
 elif pagina == "Por frota":
