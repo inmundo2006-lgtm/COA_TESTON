@@ -877,12 +877,14 @@ if pagina == "Visão geral":
         st.markdown("<p style='margin:14px 0 6px;font-size:11px;color:#888;"
                     "text-transform:uppercase;letter-spacing:.08em'>⚙️ Motor & Elevador</p>",
                     unsafe_allow_html=True)
-        cm1,cm2,cm3,cm4 = st.columns(4)
+        cm1,cm2,cm3,cm4,cm5 = st.columns(5)
         cm1.metric("🔵 Motor Ligado",   f"{motor_h:.1f}h",    f"{motor_h/num_frotas:.1f}h/máq")
         cm2.metric("🟣 Hora Elevador",  f"{elevador_h:.1f}h", f"{elevador_h/num_frotas:.1f}h/máq")
         cm3.metric("📊 Efic. Trabalho", f"{ef_trab:.1f}%",    "Elevador ÷ Motor Ligado")
         cons_total = df_perf_f["ConsumoTotal"].sum()
         cm4.metric("🛢️ Consumo total",  f"{cons_total:,.0f} L".replace(",","."))
+        rev_total  = int(df_perf_f["ReversoIndustrial"].sum()) if "ReversoIndustrial" in df_perf_f.columns else 0
+        cm5.metric("🔄 Reverso Industrial", f"{rev_total} ocorr.", f"{rev_total/num_frotas:.1f}/máq")
 
     st.markdown("<p style='margin:14px 0 6px;font-size:11px;color:#888;"
                 "text-transform:uppercase;letter-spacing:.08em'>⚠️ Breakdown Improdutivo</p>",
