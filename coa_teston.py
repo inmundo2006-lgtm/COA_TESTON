@@ -179,11 +179,14 @@ def _read_df(content: bytes) -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(content))
 
 def _tipo_maq_from_name(name: str) -> str:
-    """Colhedora ou Transbordo (trator = transbordo no contexto de colheita)."""
+    """Fallback por palavra-chave — usa a mesma nomenclatura da aba 'cadastro'."""
     n = _norm(str(name))
-    if "colhedora" in n:                                          return "Colhedora"
-    if "transbordo" in n or "caminhao" in n or "trator" in n:    return "Transbordo"
-    if "pulveriz" in n:                                           return "Transbordo"
+    if "colhedora" in n:                                    return "Colhedora"
+    if "pulveriz" in n:                                     return "Pulverizador"
+    if "pa carregadeira" in n or "carregadeira" in n:       return "Pá Carregadeira"
+    if "retroescavadeira" in n or "escavadeira" in n:       return "Retroescavadeira"
+    if any(k in n for k in ["transbordo","caminhao","trator","reboque"]):
+        return "Trator"
     return "Outro"
 
 def _frota_num(frota_str: str) -> str:
@@ -273,16 +276,40 @@ def load_veiculos(content: bytes) -> pd.DataFrame:
     })
 
 
-def build_veic_tipomaq(veiculos_df) -> dict:
-    """Retorna {frota_num: tipo_maq} ex: {'1262': 'Colhedora'}"""
+def load_tipo_maq_lookup(content: bytes) -> dict:
+    """
+    Lê a aba 'cadastro' do Veículos_Agritel.xlsx.
+    Colunas: CHAVE | SAIDA
+    Ex: {'Colhedora de Cana': 'Colhedora', 'Trator Transbordo': 'Trator', ...}
+    """
+    try:
+        df = pd.read_excel(io.BytesIO(content), sheet_name="cadastro", dtype=str)
+        chave_c = _find_col(df, ["chave","key"]) or df.columns[0]
+        saida_c = _find_col(df, ["saida","output","tipo","resultado"]) or df.columns[1]
+        return {
+            str(k).strip(): str(v).strip()
+            for k, v in zip(df[chave_c], df[saida_c])
+            if str(k).strip() and str(k).strip() != "nan"
+        }
+    except Exception:
+        return {}
+
+
+def build_veic_tipomaq(veiculos_df, tipo_lookup: dict | None = None) -> dict:
+    """
+    Retorna {frota_num: tipo_maq} ex: {'1262': 'Colhedora', '1500': 'Trator'}
+    tipo_lookup = dict da aba 'cadastro' do Veículos_Agritel: {CHAVE: SAIDA}
+    """
     result: dict[str, str] = {}
     if veiculos_df is None or veiculos_df.empty:
         return result
     for _, row in veiculos_df.iterrows():
         m = re.search(r"[Ff]rota\s*(\d+)", str(row.get("Nome", "")))
         if m:
-            fonte = str(row.get("Grupo", row.get("Nome", "")))
-            result[m.group(1)] = _tipo_maq_from_name(fonte)
+            fonte = str(row.get("Grupo", row.get("Nome", ""))).strip()
+            # Tenta lookup exato da aba cadastro, fallback por palavra-chave
+            tm = (tipo_lookup or {}).get(fonte) or _tipo_maq_from_name(fonte)
+            result[m.group(1)] = tm
     return result
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -680,7 +707,8 @@ with st.sidebar:
     # ── Mapas base ───────────────────────────────────────────────────────────
     cc_map       = load_frotas_cc(sp_data["frotas_cc"])      # {frota_num: (frente, tipo)}
     veic_df      = load_veiculos(sp_data["veiculos"]) if sp_data.get("veiculos") else None
-    veic_tipomaq = build_veic_tipomaq(veic_df)               # {frota_num: tipo_maq}
+    tipo_lookup  = load_tipo_maq_lookup(sp_data["veiculos"]) if sp_data.get("veiculos") else {}
+    veic_tipomaq = build_veic_tipomaq(veic_df, tipo_lookup)  # {frota_num: tipo_maq}
 
     st.markdown("---")
 
@@ -741,10 +769,10 @@ with st.sidebar:
         _tms = {veic_tipomaq.get(fn,"Outro")
                 for fn,(fr,tp) in cc_map.items() if tp==APP_TIPO} - {"Outro"}
         tipos_maq_disponiveis = sorted(_tms) or (
-            ["Colhedora","Transbordo"] if APP_TIPO=="colheita" else ["Trator"])
+            ["Colhedora","Trator"] if APP_TIPO=="colheita" else ["Trator","Pulverizador"])
     else:
-        tipos_maq_disponiveis = (["Colhedora","Transbordo"]
-                                  if APP_TIPO=="colheita" else ["Trator"])
+        tipos_maq_disponiveis = (["Colhedora","Trator"]
+                                  if APP_TIPO=="colheita" else ["Trator","Pulverizador"])
 
     tipos_maq_sel = st.multiselect(
         "Tipo de máquina", tipos_maq_disponiveis, default=tipos_maq_disponiveis,
