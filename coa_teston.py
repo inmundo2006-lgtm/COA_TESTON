@@ -936,6 +936,23 @@ elif pagina == "Apontamentos":
 
 
 elif pagina == "Telemetria":
+    # ── DEBUG TEMPORÁRIO — remover após confirmar ─────────────────────────
+    with st.expander("🔍 Debug (remover depois)", expanded=True):
+        st.write("**perf_consol carregado?**", sp_data.get("perf_consol") is not None)
+        st.write("**df_perf_raw vazio?**", df_perf_raw.empty)
+        if not df_perf_raw.empty:
+            st.write("**Colunas perf_raw:**", list(df_perf_raw.columns))
+            st.write("**Período perf_raw:**",
+                     df_perf_raw["Data"].min(), "→", df_perf_raw["Data"].max())
+            st.write("**Linhas perf_raw:**", len(df_perf_raw))
+            st.write("**Linhas df_perf (após filtro):**", len(df_perf))
+            if not df_perf.empty:
+                st.write("**Colunas df_perf:**", list(df_perf.columns))
+                st.write("**Tipos únicos:**", df_perf["Tipo"].unique().tolist() if "Tipo" in df_perf.columns else "—")
+            st.write("**cc_map (primeiros 5):**", dict(list(cc_map.items())[:5]))
+        else:
+            st.error("df_perf_raw está VAZIO — datas não foram parseadas ou arquivo inválido")
+    # ── FIM DEBUG ─────────────────────────────────────────────────────────
     st.markdown(f"## {CONF['icone']} Telemetria — Performance")
     banner()
     if df_perf_f.empty:
